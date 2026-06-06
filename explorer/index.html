@@ -33,12 +33,12 @@
                 <span class="stat-value" id="active-nodes">SCANNING...</span>
             </div>
             <div class="stat-box">
-                <span class="stat-label">Total Supply</span>
-                <span class="stat-value" id="total-supply">SCANNING...</span>
+                <span class="stat-label">Mined Supply</span>
+                <span class="stat-value" id="mined-supply">0</span>
             </div>
             <div class="stat-box">
-                <span class="stat-label">Network Name</span>
-                <span class="stat-value" id="network-name">SCANNING...</span>
+                <span class="stat-label">Total Supply</span>
+                <span class="stat-value" id="total-supply">SCANNING...</span>
             </div>
         </div>
 
@@ -50,26 +50,19 @@
     <script>
         async function updateStats() {
             try {
-                // Using relative path if served from same domain, or absolute if cross-domain
-                const res = await fetch('/network-state'); 
-                // Note: If you have a separate worker URL, change '/network-state' to the full URL.
+                const res = await fetch('https://seer-coordinator.toon-satoshi.workers.dev/network-state');
                 const data = await res.json();
                 
                 document.getElementById('latest-block').textContent = data.latest_block;
                 document.getElementById('active-nodes').textContent = data.active_nodes;
-                document.getElementById('total-supply').textContent = (data.total_supply / 1000000).toFixed(2) + 'M';
-                document.getElementById('network-name').textContent = data.network_name;
+                
+                const total = data.total_supply;
+                const mined = total - 100000000;
+                
+                document.getElementById('total-supply').textContent = (total / 1000000).toFixed(4) + 'M';
+                document.getElementById('mined-supply').textContent = mined.toLocaleString();
             } catch (e) {
-                console.error("Failed to fetch stats", e);
-                // Fallback to absolute URL if relative fails
-                try {
-                    const res = await fetch('https://seer-coordinator.toon-satoshi.workers.dev/network-state');
-                    const data = await res.json();
-                    document.getElementById('latest-block').textContent = data.latest_block;
-                    document.getElementById('active-nodes').textContent = data.active_nodes;
-                    document.getElementById('total-supply').textContent = (data.total_supply / 1000000).toFixed(2) + 'M';
-                    document.getElementById('network-name').textContent = data.network_name;
-                } catch (e2) {}
+                document.getElementById('latest-block').textContent = 'SYNC ERROR';
             }
         }
         updateStats();
