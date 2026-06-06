@@ -112,6 +112,10 @@ pub struct SimParams {
     pub target_velocity: i64,
     /// Target block time in seconds.
     pub target_block_time: u64,
+    /// Number of epochs to simulate.
+    pub max_epochs: u64,
+    /// Number of blocks per epoch.
+    pub blocks_per_epoch: u64,
     /// Random seed for deterministic simulation.
     pub seed: u64,
 }
@@ -129,6 +133,8 @@ impl Default for SimParams {
             target_gini: TARGET_GINI,
             target_velocity: TARGET_VELOCITY,
             target_block_time: TARGET_BLOCK_TIME,
+            max_epochs: SIM_EPOCHS,
+            blocks_per_epoch: BLOCKS_PER_EPOCH,
             seed: 0x5EED_5EED_5EED_5EED,
         }
     }
@@ -248,7 +254,7 @@ impl ConvergenceEngine {
         let mut total_burned: u64 = 0;
         let mut difficulty = p.initial_difficulty;
         let mut node_count = p.initial_nodes;
-        let mut epochs: Vec<EpochState> = Vec::with_capacity(SIM_EPOCHS as usize);
+        let mut epochs: Vec<EpochState> = Vec::with_capacity(p.max_epochs as usize);
         let mut stable_streak: u64 = 0;
         let mut convergence_epoch: Option<u64> = None;
 
@@ -262,13 +268,13 @@ impl ConvergenceEngine {
             })
             .collect();
 
-        for epoch in 0..SIM_EPOCHS {
-            let height_start = epoch * BLOCKS_PER_EPOCH;
+        for epoch in 0..p.max_epochs {
+            let height_start = epoch * p.blocks_per_epoch;
             let halvings = height_start / p.halving_interval;
             let block_reward = p.base_reward >> halvings.min(63);
 
             // ── Supply dynamics ───────────────────────────────────────────────
-            let minted = block_reward.saturating_mul(BLOCKS_PER_EPOCH);
+            let minted = block_reward.saturating_mul(p.blocks_per_epoch);
             let burned_epoch =
                 supply.saturating_mul(p.burn_rate_num).saturating_div(10_000);
             supply = supply.saturating_add(minted).saturating_sub(burned_epoch);
@@ -289,7 +295,7 @@ impl ConvergenceEngine {
             }
 
             // ── Wealth redistribution ─────────────────────────────────────────
-            for _ in 0..BLOCKS_PER_EPOCH.min(node_count) {
+            for _ in 0..p.blocks_per_epoch.min(node_count) {
                 let miner_idx = rng.next_mod(node_count) as usize;
                 if miner_idx < balances.len() {
                     balances[miner_idx] =
@@ -297,7 +303,7 @@ impl ConvergenceEngine {
                 }
             }
 
-            let tx_count = rng.next_mod(BLOCKS_PER_EPOCH * 10);
+            let tx_count = rng.next_mod(p.blocks_per_epoch * 10);
             for _ in 0..tx_count {
                 if balances.len() < 2 {
                     break;
@@ -544,6 +550,8 @@ mod tests {
             target_gini: TARGET_GINI,
             target_velocity: TARGET_VELOCITY,
             target_block_time: TARGET_BLOCK_TIME,
+            max_epochs: 5,
+            blocks_per_epoch: 10,
             seed: 0x5EED_5EED_5EED_5EED,
         })
     }
