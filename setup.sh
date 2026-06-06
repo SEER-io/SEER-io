@@ -51,7 +51,7 @@ EOF
 echo "Configuration written to config/genesis.toml"
 
 # 6. Register Node with Coordinator
-COORDINATOR_URL="https://seer-coordinator.workers.dev/register" # Placeholder URL
+COORDINATOR_URL="https://seer-coordinator.toon-satoshi.workers.dev/register" # Actual URL
 
 echo "Registering node with coordinator..."
 RESPONSE=$(curl -s -X POST "$COORDINATOR_URL" \
