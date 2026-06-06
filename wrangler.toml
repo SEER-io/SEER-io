@@ -1,6 +1,3 @@
-name = "seer-network"
-
-# This is the exact field Cloudflare Pages looks for
 pages_build_output_dir = "dist"
 
 [[kv_namespaces]]
