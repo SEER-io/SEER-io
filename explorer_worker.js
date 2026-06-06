@@ -38,12 +38,12 @@ async function handleRequest(request) {
                 <span class="stat-value" id="active-nodes">SCANNING...</span>
             </div>
             <div class="stat-box">
-                <span class="stat-label">Total Supply</span>
-                <span class="stat-value" id="total-supply">SCANNING...</span>
+                <span class="stat-label">Mined Supply</span>
+                <span class="stat-value" id="mined-supply">0</span>
             </div>
             <div class="stat-box">
-                <span class="stat-label">Network Name</span>
-                <span class="stat-value" id="network-name">SCANNING...</span>
+                <span class="stat-label">Total Supply</span>
+                <span class="stat-value" id="total-supply">SCANNING...</span>
             </div>
         </div>
 
@@ -60,8 +60,12 @@ async function handleRequest(request) {
                 
                 document.getElementById('latest-block').textContent = data.latest_block;
                 document.getElementById('active-nodes').textContent = data.active_nodes;
-                document.getElementById('total-supply').textContent = (data.total_supply / 1000000).toFixed(2) + 'M';
-                document.getElementById('network-name').textContent = data.network_name;
+                
+                const total = data.total_supply;
+                const mined = total - 100000000;
+                
+                document.getElementById('total-supply').textContent = (total / 1000000).toFixed(4) + 'M';
+                document.getElementById('mined-supply').textContent = mined.toLocaleString();
             } catch (e) {
                 document.getElementById('latest-block').textContent = 'SYNC ERROR';
             }
