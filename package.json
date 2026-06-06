@@ -1,0 +1,11 @@
+{
+  "name": "seer-network",
+  "version": "1.0.0",
+  "description": "SEER Network Explorer and Coordinator",
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp -rv explorer/* dist/",
+    "deploy": "npm run build"
+  },
+  "author": "",
+  "license": "MIT"
+}

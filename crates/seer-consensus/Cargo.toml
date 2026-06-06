@@ -1,0 +1,7 @@
+# Package manifest for the network consensus mechanism.
+[package]
+name = "seer-consensus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

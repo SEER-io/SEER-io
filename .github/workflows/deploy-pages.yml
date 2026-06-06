@@ -1,0 +1,21 @@
+name: Deploy Explorer Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'explorer/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy explorer --project-name=${{ secrets.CF_PROJECT_NAME }}

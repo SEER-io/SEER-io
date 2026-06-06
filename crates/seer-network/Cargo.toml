@@ -1,0 +1,8 @@
+# Package manifest for network routing layers.
+[package]
+name = "seer-network"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+seer-crypto = { path = "../seer-crypto" }

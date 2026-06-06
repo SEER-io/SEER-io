@@ -1,0 +1,13 @@
+# #############################################################################
+# SEER CORE PRIMITIVES v2.0
+#
+# Role: Provides the foundational Bag-of-Cells (BoC) data structures, block 
+# schemas, and transaction logic. This crate is the bedrock of the Seer 
+# state machine, ensuring Merkle-proof integrity and atomic state transitions.
+# #############################################################################
+[package]
+name = "seer-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

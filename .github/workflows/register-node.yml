@@ -1,0 +1,25 @@
+name: Register Node
+
+on:
+  workflow_dispatch:
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Derive Node ID and Register
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          NODE_ID=$(echo -n "$BOT_TOKEN" | sha256sum | awk '{print $1}' | cut -c1-12)
+          echo "Node ID: $NODE_ID"
+          
+          # Call coordinator endpoint
+          RESPONSE=$(curl -s -X POST "https://seer-coordinator.workers.dev/register" \
+              -H "Content-Type: application/json" \
+              -d "{\"bot_token\": \"$BOT_TOKEN\", \"node_id\": \"$NODE_ID\"}")
+          
+          echo "Response from Coordinator: $RESPONSE"
+          echo "### Node Registration Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Node ID**: \`$NODE_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Registered" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,7 @@
+# Package manifest for multi-agent macro simulations.
+[package]
+name = "simulation"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

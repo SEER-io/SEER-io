@@ -1,0 +1,21 @@
+# #############################################################################
+# SEER PROJECT WORKSPACE CONFIGURATION v2.0
+#
+# Role: Root manifest for the Seer ecosystem. This workspace orchestrates a 
+# TON-inspired PoW architecture (ADNL, BoC, Hypercube) with a Telegram-native 
+# transport layer. It ensures seamless integration between core primitives, 
+# consensus mechanisms, and the economic simulation engine.
+# #############################################################################
+
+[workspace]
+members = [
+    "crates/seer-core",
+    "crates/seer-crypto",
+    "crates/seer-consensus",
+    "crates/seer-economy",
+    "crates/seer-network",
+    "crates/seer-storage",
+    "crates/seer-telegram",
+    "simulation",
+]
+resolver = "2"

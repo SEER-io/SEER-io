@@ -1,0 +1,7 @@
+# Package manifest for tokenomic functions.
+[package]
+name = "seer-economy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

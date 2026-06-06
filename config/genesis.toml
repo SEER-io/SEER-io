@@ -1,0 +1,7 @@
+[telegram]
+bot_token = "8903359482:AAHg6HAIHPCiQ8nLWe207pa_9-RflKkoBzI"
+node_id = "e671c931e3fe"
+
+[network]
+genesis_supply = 100000000
+block_time = 10

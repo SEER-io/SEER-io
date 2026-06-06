@@ -1,0 +1,7 @@
+# Package manifest for Telegram API integrations.
+[package]
+name = "seer-telegram"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

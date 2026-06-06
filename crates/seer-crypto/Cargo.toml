@@ -1,0 +1,13 @@
+# #############################################################################
+# SEER CRYPTOGRAPHIC PRIMITIVES v2.0
+#
+# Role: Implements the essential security layer for Seer. This includes 
+# ADNL-based node identities (256-bit abstract IDs), zero-channel 
+# bootstrapping for secure peer-to-peer tunnels, and robust hashing.
+# #############################################################################
+[package]
+name = "seer-crypto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
