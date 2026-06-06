@@ -1,1 +1,0 @@
-/data/data/com.termux/files/home/Seer_project/Seer/target/debug/libseer_storage.rlib: /data/data/com.termux/files/home/Seer_project/Seer/crates/seer-storage/src/db.rs /data/data/com.termux/files/home/Seer_project/Seer/crates/seer-storage/src/lib.rs

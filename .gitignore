@@ -1,0 +1,10 @@
+/target/
+**/*.rs.bk
+Cargo.lock
+.env
+.DS_Store
+node_modules/
+dist/
+build/
+wrangler-temp/
+.wrangler/

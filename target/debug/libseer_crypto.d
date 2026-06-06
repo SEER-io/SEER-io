@@ -1,1 +1,0 @@
-/data/data/com.termux/files/home/Seer_project/Seer/target/debug/libseer_crypto.rlib: /data/data/com.termux/files/home/Seer_project/Seer/crates/seer-crypto/src/adnl.rs /data/data/com.termux/files/home/Seer_project/Seer/crates/seer-crypto/src/lib.rs /data/data/com.termux/files/home/Seer_project/Seer/crates/seer-crypto/src/zero_channel.rs
