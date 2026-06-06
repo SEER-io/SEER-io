@@ -234,15 +234,16 @@ pub struct ConvergenceEngine {
     params: SimParams,
 }
 
+impl Default for ConvergenceEngine {
+    fn default() -> Self {
+        ConvergenceEngine::new(SimParams::default())
+    }
+}
+
 impl ConvergenceEngine {
     /// Creates a new simulation engine with the given parameters.
     pub fn new(params: SimParams) -> Self {
         ConvergenceEngine { params }
-    }
-
-    /// Creates a new simulation engine with default (genesis-canonical) parameters.
-    pub fn default() -> Self {
-        ConvergenceEngine::new(SimParams::default())
     }
 
     /// Runs the full simulation and returns the result.
@@ -341,8 +342,7 @@ impl ConvergenceEngine {
             let target_hashes = 1u64 << difficulty.min(63);
             let avg_block_time = target_hashes
                 .saturating_div(hash_power.max(1))
-                .max(1)
-                .min(300);
+                .clamp(1, 300);
 
             if avg_block_time
                 < p.target_block_time

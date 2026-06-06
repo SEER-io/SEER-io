@@ -126,10 +126,10 @@ impl FactoryBot {
         // Derive public key: SHA-256(seed ++ "pubkey")
         let mut pk_input = seed.to_vec();
         pk_input.extend_from_slice(b"pubkey");
-        let public_key: [u8; 32] = sha256(&pk_input).into();
+        let public_key: [u8; 32] = sha256(&pk_input);
 
         // Derive ADNL identity: SHA-256(public_key)
-        let node_id: [u8; 32] = sha256(&public_key).into();
+        let node_id: [u8; 32] = sha256(&public_key);
 
         if self.nodes.contains_key(&node_id) {
             return Err(FactoryError::AlreadyRegistered);

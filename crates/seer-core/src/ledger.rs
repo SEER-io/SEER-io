@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use crate::block::{Block, validate_block, validate_block_linkage, BlockError};
-use crate::transaction::{Transaction, TxKind, validate_tx, TxError};
+use crate::transaction::{validate_tx, TxError};
 
 // ─── Account state ────────────────────────────────────────────────────────────
 

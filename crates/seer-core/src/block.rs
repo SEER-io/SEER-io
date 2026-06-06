@@ -20,7 +20,7 @@
 //! └────────────────────────────────────────┘
 //! ```
 
-use crate::transaction::{Transaction, TxKind};
+use crate::transaction::Transaction;
 
 // ─── SHA-256 (inlined) ────────────────────────────────────────────────────────
 
@@ -189,6 +189,7 @@ pub struct Block {
 
 impl Block {
     /// Creates a new block and computes the Merkle root from transactions.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         height: u64,
         prev_hash: [u8; 32],

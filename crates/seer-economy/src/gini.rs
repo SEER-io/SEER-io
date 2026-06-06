@@ -115,11 +115,9 @@ pub fn reward_multiplier(
     let excess = network_gini.saturating_sub(target_gini);
     // Normalise excess to [0, 1] relative to maximum possible deviation.
     let max_excess = GINI_PRECISION - target_gini;
-    let excess_ratio = if max_excess == 0 {
-        GINI_PRECISION
-    } else {
-        excess * GINI_PRECISION / max_excess
-    };
+    let excess_ratio = (excess * GINI_PRECISION)
+        .checked_div(max_excess)
+        .unwrap_or(GINI_PRECISION);
 
     // Accounts below mean get a boost; accounts above mean get a penalty.
     if account_balance <= mean_balance {

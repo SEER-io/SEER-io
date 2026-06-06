@@ -117,6 +117,7 @@ pub struct Transaction {
 
 impl Transaction {
     /// Creates a new unsigned transaction and computes its hash.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sender: Address,
         recipient: Address,
@@ -316,7 +317,7 @@ impl TxPool {
     /// Returns transactions sorted by fee descending (for block building).
     pub fn sorted_by_fee(&self) -> Vec<&Transaction> {
         let mut txs: Vec<&Transaction> = self.txs.values().collect();
-        txs.sort_unstable_by(|a, b| b.fee.cmp(&a.fee));
+        txs.sort_unstable_by_key(|b| std::cmp::Reverse(b.fee));
         txs
     }
 

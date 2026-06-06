@@ -206,7 +206,7 @@ impl BotNode {
     /// Returns mempool entries sorted by fee (highest first).
     pub fn mempool_by_fee(&self) -> Vec<&MempoolEntry> {
         let mut entries: Vec<&MempoolEntry> = self.mempool.values().collect();
-        entries.sort_unstable_by(|a, b| b.fee.cmp(&a.fee));
+        entries.sort_unstable_by_key(|b| std::cmp::Reverse(b.fee));
         entries
     }
 

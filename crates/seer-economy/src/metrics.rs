@@ -11,7 +11,7 @@
 //! - **Epoch Statistics**: per-epoch transaction count, volume, and fee totals
 
 use crate::constants::{
-    BURN_RATE_BASE_NUM, BURN_RATE_MAX_NUM, RATE_DENOM,
+    BURN_RATE_BASE_NUM, BURN_RATE_MAX_NUM,
     SENTIMENT_BUFFER_SCALED, SENTIMENT_SCALE,
     VELOCITY_TARGET_SCALED, VELOCITY_SCALE,
 };
@@ -41,6 +41,7 @@ pub struct EpochSnapshot {
 
 impl EpochSnapshot {
     /// Creates a new epoch snapshot.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         start_height: u64,
         end_height: u64,
@@ -119,26 +120,20 @@ impl SentimentScalar {
         let scale = SENTIMENT_SCALE;
 
         // 1. Active address growth ratio (capped at 2×).
-        let addr_ratio = if prev.active_addresses == 0 {
-            scale // neutral if no previous data
-        } else {
-            (curr.active_addresses * scale / prev.active_addresses).min(2 * scale)
-        };
+        let addr_ratio = (curr.active_addresses * scale)
+            .checked_div(prev.active_addresses)
+            .unwrap_or(scale)
+            .min(2 * scale);
 
         // 2. Fee-to-volume ratio (higher = more demand, capped at scale).
-        let fee_ratio = if curr.volume == 0 {
-            0
-        } else {
-            (curr.fees_collected * scale / curr.volume).min(scale)
-        };
+        let fee_ratio = (curr.fees_collected * scale)
+            .checked_div(curr.volume)
+            .unwrap_or(0)
+            .min(scale);
 
         // 3. Velocity deviation: how close is velocity to target?
         let velocity = compute_velocity(curr);
-        let vel_deviation = if velocity >= VELOCITY_TARGET_SCALED {
-            velocity - VELOCITY_TARGET_SCALED
-        } else {
-            VELOCITY_TARGET_SCALED - velocity
-        };
+        let vel_deviation = velocity.abs_diff(VELOCITY_TARGET_SCALED);
         // Normalise deviation to [0, scale]; small deviation → high score.
         let vel_score = scale.saturating_sub(
             vel_deviation * scale / VELOCITY_TARGET_SCALED.max(1)
@@ -174,11 +169,7 @@ pub fn dynamic_burn_rate(velocity: u64, sentiment: &SentimentScalar) -> u64 {
     let base = BURN_RATE_BASE_NUM;
 
     // Velocity factor: how far below target is velocity?
-    let vel_deficit = if velocity >= VELOCITY_TARGET_SCALED {
-        0u64
-    } else {
-        VELOCITY_TARGET_SCALED - velocity
-    };
+    let vel_deficit = VELOCITY_TARGET_SCALED.saturating_sub(velocity);
     // Each unit of deficit adds a fraction of a burn rate point.
     let vel_adjustment = vel_deficit * (BURN_RATE_MAX_NUM - base)
         / VELOCITY_TARGET_SCALED.max(1);
