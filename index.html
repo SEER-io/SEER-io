@@ -43,7 +43,7 @@
         </div>
 
         <div class="footer">
-            SEER NETWORK v1.0.0 | COORDINATOR: seer-coordinator.workers.dev
+            SEER NETWORK v1.0.0 | COORDINATOR: seer-coordinator.toon-satoshi.workers.dev
         </div>
     </div>
 
@@ -63,7 +63,7 @@
                 console.error("Failed to fetch stats", e);
                 // Fallback to absolute URL if relative fails
                 try {
-                    const res = await fetch('https://seer-coordinator.workers.dev/network-state');
+                    const res = await fetch('https://seer-coordinator.toon-satoshi.workers.dev/network-state');
                     const data = await res.json();
                     document.getElementById('latest-block').textContent = data.latest_block;
                     document.getElementById('active-nodes').textContent = data.active_nodes;
