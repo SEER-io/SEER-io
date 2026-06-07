@@ -2,7 +2,9 @@ pages_build_output_dir = "explorer"
 
 [[kv_namespaces]]
 binding = "NETWORK_STATE"
+id = "a2e00c297fd94607a62b0236265bf81c"
 
 [[d1_databases]]
 binding = "SEER_DB"
 database_name = "seer_nodes"
+database_id = "def29057-1382-4993-9789-4a652431ecff"
