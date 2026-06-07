@@ -18,8 +18,16 @@ export default {
       const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
       const lastLog = await env.BOT_STATE.get("last_mining_log") || "No logs yet.";
       const lastReq = await env.BOT_STATE.get("last_request") || "None";
-      const nodeID = await getNodeID(env);
-      return new Response(JSON.stringify({ ...state, ...settings, node_id: nodeID, last_log: lastLog, last_request: lastReq }), { 
+      const identity = await getOrCreateIdentity(env);
+      
+      return new Response(JSON.stringify({ 
+        ...state, 
+        ...settings, 
+        node_id: identity.adnl_id, 
+        public_key: identity.publicKeyHex,
+        last_log: lastLog, 
+        last_request: lastReq 
+      }), { 
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
       });
     }
@@ -58,6 +66,191 @@ export default {
     }
   }
 };
+
+async function getOrCreateIdentity(env) {
+  let stored = await env.BOT_STATE.get("identity", { type: "json" });
+  if (stored) return stored;
+
+  // Generate real Ed25519 keypair
+  const keyPair = await crypto.subtle.generateKey(
+    { name: "Ed25519", namedCurve: "Ed25519" },
+    true,
+    ["sign", "verify"]
+  );
+
+  const publicKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+  const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+
+  const publicKeyHex = bytesToHex(new Uint8Array(publicKey));
+  
+  // Derive ADNL ID: SHA256(public_key)
+  const adnlHash = await crypto.subtle.digest("SHA-256", publicKey);
+  const adnl_id = bytesToHex(new Uint8Array(adnlHash)).slice(0, 24);
+
+  const identity = {
+    adnl_id,
+    publicKeyHex,
+    privateKeyBase64: btoa(String.fromCharCode(...new Uint8Array(privateKey)))
+  };
+
+  await env.BOT_STATE.put("identity", JSON.stringify(identity));
+  return identity;
+}
+
+async function performMining(env) {
+  const start = Date.now();
+  try {
+    // 1. Get current network state
+    let res;
+    if (env.COORDINATOR) {
+      res = await env.COORDINATOR.fetch(new Request("https://coordinator/network-state"));
+    } else {
+      res = await fetch(`${COORDINATOR_URL}/network-state`, {
+        headers: { "User-Agent": "SEER-Node-Worker" }
+      });
+    }
+    
+    if (!res.ok) {
+      const text = await res.text();
+      await env.BOT_STATE.put("last_mining_log", `Fetch failed: ${res.status} ${text.slice(0, 100)}`);
+      return null;
+    }
+    
+    const netState = await res.json();
+    const currentHeight = netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block);
+    const targetHeight = currentHeight + 1;
+    const prevHash = hexToBytes(netState.latest_hash || "0000000000000000000000000000000000000000000000000000000000000000");
+    const identity = await getOrCreateIdentity(env);
+    
+    // Header Structure (92 bytes):
+    // 0..8: height (LE)
+    // 8..40: prev_hash
+    // 40..72: tx_root
+    // 72..80: timestamp (LE)
+    // 80..84: difficulty (LE)
+    // 84..92: nonce (LE)
+    
+    const buffer = new ArrayBuffer(92);
+    const view = new DataView(buffer);
+    const uint8 = new Uint8Array(buffer);
+    
+    view.setBigUint64(0, BigInt(targetHeight), true);
+    uint8.set(prevHash, 8);
+    // tx_root (all zeros for now)
+    view.setUint32(80, 16, true); // Difficulty 16
+
+    // Attempt 50,000 nonces (lower for CPU limits with strict hashing)
+    for (let i = 0; i < 50000; i++) {
+      const nonce = BigInt(Math.floor(Math.random() * 2000000000));
+      const timestamp = BigInt(Math.floor(Date.now() / 1000));
+      
+      view.setBigUint64(72, timestamp, true);
+      view.setBigUint64(84, nonce, true);
+      
+      const hash1 = await crypto.subtle.digest("SHA-256", buffer);
+      const hash2 = await crypto.subtle.digest("SHA-256", hash1);
+      const hashArray = new Uint8Array(hash2);
+      
+      // 16-bit difficulty check
+      if (hashArray[0] === 0 && hashArray[1] === 0) {
+        const hashHex = bytesToHex(hashArray);
+        
+        const submitBody = JSON.stringify({
+          height: targetHeight,
+          prev_hash: bytesToHex(prevHash),
+          timestamp: Number(timestamp),
+          difficulty: 16,
+          nonce: Number(nonce),
+          hash: hashHex,
+          miner: identity.adnl_id
+        });
+
+        let submitRes;
+        if (env.COORDINATOR) {
+          submitRes = await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: submitBody
+          }));
+        } else {
+          submitRes = await fetch(`${COORDINATOR_URL}/submit-block`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: submitBody
+          });
+        }
+        
+        if (submitRes.ok) {
+          let localState = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
+          localState.height = targetHeight;
+          localState.blocks_mined++;
+          await env.BOT_STATE.put("node_state", JSON.stringify(localState));
+          await env.BOT_STATE.put("last_mining_log", `Success! Block ${targetHeight} mined and verified.`);
+          return { height: targetHeight, hash: hashHex };
+        }
+      }
+    }
+    await env.BOT_STATE.put("last_mining_log", `Cycle finished. 50k strict hashes tried. No block.`);
+  } catch (e) {
+    await env.BOT_STATE.put("last_mining_log", `Error: ${e.message}`);
+  }
+  return null;
+}
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function handleTelegramUpdate(update, env) {
+  if (!update.message || !update.message.text) return new Response("OK");
+
+  const chatId = update.message.chat.id;
+  const text = update.message.text;
+
+  if (text === "/start") {
+    const url = "https://seer-node-001.toon-satoshi.workers.dev";
+    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining in the background.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n🔗 Dashboard Link: ${url}\n\nAvailable commands:\n/status - View node performance\n/mine - Trigger manual mining\n/mining_on - Enable background mining\n/mining_off - Disable background mining`);
+  } else if (text === "/mining_on") {
+    const settings = await env.BOT_STATE.get("settings", {type: "json"}) || { node_name: "SEER Node 001" };
+    await env.BOT_STATE.put("settings", JSON.stringify({ ...settings, mining_enabled: true }));
+    await sendTgMessage(chatId, "✅ Background mining ENABLED.");
+  } else if (text === "/mining_off") {
+    const settings = await env.BOT_STATE.get("settings", {type: "json"}) || { node_name: "SEER Node 001" };
+    await env.BOT_STATE.put("settings", JSON.stringify({ ...settings, mining_enabled: false }));
+    await sendTgMessage(chatId, "🛑 Background mining DISABLED.");
+  } else if (text === "/status") {
+    const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
+    const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
+    const identity = await getOrCreateIdentity(env);
+    await sendTgMessage(chatId, `📊 ${settings.node_name} STATUS\nHeight: ${state.height}\nBlocks Mined: ${state.blocks_mined}\nMining: ${settings.mining_enabled ? 'ON' : 'OFF'}\nNode ID: ${identity.adnl_id}`);
+  } else if (text === "/mine") {
+    await sendTgMessage(chatId, "⛏️ Manual mining attempt started (Strict 92-byte Protocol)...");
+    const result = await performMining(env);
+    if (result) {
+      await sendTgMessage(chatId, `✅ Block mined! Height: ${result.height}\nHash: ${result.hash.slice(0, 16)}...`);
+    } else {
+      await sendTgMessage(chatId, "❌ No block found in this cycle.");
+    }
+  }
+
+  return new Response("OK");
+}
+
+async function sendTgMessage(chatId, text) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: text })
+  });
+}
 
 async function pollTelegramUpdates(env) {
   try {
@@ -223,135 +416,4 @@ function generateDashboardHTML() {
     </script>
 </body>
 </html>`;
-}
-
-async function handleTelegramUpdate(update, env) {
-  if (!update.message || !update.message.text) return new Response("OK");
-
-  const chatId = update.message.chat.id;
-  const text = update.message.text;
-
-  if (text === "/start") {
-    const url = "https://seer-node-001.toon-satoshi.workers.dev";
-    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining in the background.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n🔗 Dashboard Link: ${url}\n\nAvailable commands:\n/status - View node performance\n/mine - Trigger manual mining\n/mining_on - Enable background mining\n/mining_off - Disable background mining`);
-  } else if (text === "/mining_on") {
-    await env.BOT_STATE.put("settings", JSON.stringify({ mining_enabled: true, node_name: (await env.BOT_STATE.get("settings", {type: "json"}) || {}).node_name || "SEER Node 001" }));
-    await sendTgMessage(chatId, "✅ Background mining ENABLED.");
-  } else if (text === "/mining_off") {
-    const settings = await env.BOT_STATE.get("settings", {type: "json"}) || { node_name: "SEER Node 001" };
-    await env.BOT_STATE.put("settings", JSON.stringify({ ...settings, mining_enabled: false }));
-    await sendTgMessage(chatId, "🛑 Background mining DISABLED.");
-  } else if (text === "/status") {
-    const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
-    const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
-    await sendTgMessage(chatId, `📊 ${settings.node_name} STATUS\nHeight: ${state.height}\nBlocks Mined: ${state.blocks_mined}\nMining: ${settings.mining_enabled ? 'ON' : 'OFF'}\nNode ID: ${await getNodeID(env)}`);
-  } else if (text === "/mine") {
-    await sendTgMessage(chatId, "⛏️ Manual mining attempt started...");
-    const result = await performMining(env);
-    if (result) {
-      await sendTgMessage(chatId, `✅ Block mined! Height: ${result.height}\nHash: ${result.hash.slice(0, 16)}...`);
-    } else {
-      await sendTgMessage(chatId, "❌ No block found in this cycle.");
-    }
-  }
-
-  return new Response("OK");
-}
-
-async function sendTgMessage(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: text })
-  });
-}
-
-async function getNodeID(env) {
-  let id = await env.BOT_STATE.get("node_id");
-  if (!id) {
-    id = Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b => b.toString(16).padStart(2, '0')).join('');
-    await env.BOT_STATE.put("node_id", id);
-  }
-  return id;
-}
-
-async function performMining(env) {
-  const start = Date.now();
-  try {
-    // 1. Get current network state
-    // Use Service Binding if available (bypasses Cloudflare loopback restriction)
-    let res;
-    if (env.COORDINATOR) {
-      res = await env.COORDINATOR.fetch(new Request("https://coordinator/network-state"));
-    } else {
-      res = await fetch(`${COORDINATOR_URL}/network-state`, {
-        headers: { "User-Agent": "SEER-Node-Worker" }
-      });
-    }
-    
-    if (!res.ok) {
-      const text = await res.text();
-      await env.BOT_STATE.put("last_mining_log", `Fetch failed: ${res.status} ${text.slice(0, 100)}`);
-      return null;
-    }
-    
-    const netState = await res.json();
-    
-    const currentHeight = netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block);
-    const targetHeight = currentHeight + 1;
-    const prevHash = netState.latest_hash;
-    const nodeID = await getNodeID(env);
-    
-    // Attempt 100,000 nonces
-    const encoder = new TextEncoder();
-    const baseData = `${targetHeight}${prevHash}${nodeID}`;
-    
-    for (let i = 0; i < 100000; i++) {
-      const nonce = Math.floor(Math.random() * 2000000000);
-      const timestamp = Math.floor(Date.now() / 1000);
-      const data = encoder.encode(baseData + timestamp + nonce);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-      const hashArray = new Uint8Array(hashBuffer);
-      
-      if (hashArray[0] === 0 && hashArray[1] === 0) {
-        const hashHex = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
-        
-        // 3. Submit block
-        const submitBody = JSON.stringify({
-          height: targetHeight,
-          hash: hashHex,
-          nonce: nonce,
-          miner: nodeID
-        });
-
-        let submitRes;
-        if (env.COORDINATOR) {
-          submitRes = await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: submitBody
-          }));
-        } else {
-          submitRes = await fetch(`${COORDINATOR_URL}/submit-block`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: submitBody
-          });
-        }
-        
-        if (submitRes.ok) {
-          let localState = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
-          localState.height = targetHeight;
-          localState.blocks_mined++;
-          await env.BOT_STATE.put("node_state", JSON.stringify(localState));
-          await env.BOT_STATE.put("last_mining_log", `Success! Block ${targetHeight} mined in ${Date.now() - start}ms`);
-          return { height: targetHeight, hash: hashHex };
-        }
-      }
-    }
-    await env.BOT_STATE.put("last_mining_log", `Cycle finished. 100k hashes tried in ${Date.now() - start}ms. No block found.`);
-  } catch (e) {
-    await env.BOT_STATE.put("last_mining_log", `Error: ${e.message}`);
-  }
-  return null;
 }

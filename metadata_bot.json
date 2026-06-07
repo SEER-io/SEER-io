@@ -1,0 +1,17 @@
+{
+  "main_module": "bot_node_worker.js",
+  "bindings": [
+    {
+      "type": "kv_namespace",
+      "name": "BOT_STATE",
+      "namespace_id": "033a828fdd8e4d25ad7275dd059bc7b5"
+    },
+    {
+      "type": "service",
+      "name": "COORDINATOR",
+      "service": "seer-coordinator"
+    }
+  ],
+  "usage_model": "standard",
+  "compatibility_date": "2026-06-06"
+}

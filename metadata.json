@@ -1,0 +1,5 @@
+{
+  "main_module": "coordinator_worker_api.js",
+  "usage_model": "standard",
+  "compatibility_date": "2026-06-06"
+}
