@@ -1,16 +1,19 @@
 const BOT_TOKEN = "8951904080:AAFbh5R5F1bZz-am9BF0F2drcqxMuTQI6RM";
 const COORDINATOR_URL = "https://seer-coordinator.toon-satoshi.workers.dev";
+const MASTER_CHANNEL_ID = "-1003997728534"; // Global Miner Channel
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     await env.BOT_STATE.put("last_request", `${request.method} ${url.pathname} at ${new Date().toISOString()}`);
 
+    // 1. Handle Telegram Webhooks
     if (request.method === "POST" && url.pathname === "/telegram-webhook") {
       const update = await request.json();
       return handleTelegramUpdate(update, env);
     }
 
+    // 2. Handle API Status
     if (url.pathname === "/status") {
       const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0, earned_seer: 0 };
       if (!state.earned_seer) state.earned_seer = 0;
@@ -42,6 +45,7 @@ export default {
       });
     }
 
+    // 3. Handle Settings Update
     if (request.method === "POST" && url.pathname === "/update-settings") {
       const newSettings = await request.json();
       const currentSettings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
@@ -50,6 +54,7 @@ export default {
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
     }
 
+    // 4. Serve Mini App Dashboard
     if (url.pathname === "/" || url.pathname === "/index.html") {
       return new Response(generateDashboardHTML(), { headers: { "Content-Type": "text/html" } });
     }
@@ -65,7 +70,7 @@ export default {
         const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { earned_seer: 0 };
         
         if (!state.earned_seer || state.earned_seer < amount) {
-          return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400, headers: corsHeaders });
+          return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400 });
         }
 
         state.earned_seer -= amount;
@@ -96,12 +101,28 @@ export default {
 
   async scheduled(event, env, ctx) {
     const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true };
+    
+    // 1. Process pending Telegram updates (Polling Fallback)
     ctx.waitUntil(pollTelegramUpdates(env));
+
+    // 2. Perform Mining
     if (settings.mining_enabled) {
       ctx.waitUntil(performMining(env));
     }
   }
 };
+
+async function announceToMasterChannel(text) {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: MASTER_CHANNEL_ID, text: text, parse_mode: "HTML" })
+    });
+  } catch (e) {
+    console.error("Master channel announce failed", e);
+  }
+}
 
 async function getOrCreateIdentity(env) {
   let stored = await env.BOT_STATE.get("identity", { type: "json" });
@@ -115,7 +136,6 @@ async function getOrCreateIdentity(env) {
 
   const publicKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
   const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
-
   const publicKeyHex = bytesToHex(new Uint8Array(publicKey));
   const adnlHash = await crypto.subtle.digest("SHA-256", publicKey);
   const adnl_id = bytesToHex(new Uint8Array(adnlHash)).slice(0, 24);
@@ -127,6 +147,10 @@ async function getOrCreateIdentity(env) {
   };
 
   await env.BOT_STATE.put("identity", JSON.stringify(identity));
+  
+  // ANNOUNCE NEW MINER
+  await announceToMasterChannel(`🛰 <b>NEW MINER ONLINE</b>\nNode ID: <code>${adnl_id}</code>\nIdentity generated and secured.`);
+  
   return identity;
 }
 
@@ -201,6 +225,10 @@ async function performMining(env) {
           localState.earned_seer += 50; 
           await env.BOT_STATE.put("node_state", JSON.stringify(localState));
           await env.BOT_STATE.put("last_mining_log", `Success! Block ${targetHeight} mined. +50 SEER earned.`);
+          
+          // ANNOUNCE BLOCK SUCCESS
+          await announceToMasterChannel(`⛏ <b>BLOCK MINED</b>\nHeight: <b>${targetHeight}</b>\nMiner: <code>${identity.adnl_id}</code>\nReward: 50 SEER`);
+          
           return { height: targetHeight, hash: hashHex };
         }
       }
