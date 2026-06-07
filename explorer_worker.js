@@ -129,9 +129,9 @@ async function handleRequest(request) {
         setInterval(updateStats, 5000);
     </script>
 </body>
-</html>\`;
-    
+</html>`;
+
   return new Response(html, {
     headers: { "Content-Type": "text/html" }
-  })
+  });
 }
