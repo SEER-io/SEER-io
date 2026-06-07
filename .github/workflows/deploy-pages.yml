@@ -15,13 +15,9 @@ jobs:
     name: Deploy
     steps:
       - uses: actions/checkout@v4
-      - name: Install Dependencies
-        run: npm install
-      - name: Build
-        run: npm run build
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=seer-network
+          command: pages deploy explorer --project-name=seer-network

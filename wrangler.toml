@@ -1,4 +1,4 @@
-pages_build_output_dir = "dist"
+pages_build_output_dir = "explorer"
 
 [[kv_namespaces]]
 binding = "NETWORK_STATE"
