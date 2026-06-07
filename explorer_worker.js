@@ -64,7 +64,6 @@ async function handleRequest(request) {
                     </tr>
                 </thead>
                 <tbody id="block-table-body">
-                    <!-- Blocks injected here -->
                 </tbody>
             </table>
         </div>
@@ -93,7 +92,6 @@ async function handleRequest(request) {
                 document.getElementById('velocity').textContent = (data.velocity || 0.002).toFixed(3);
                 document.getElementById('gini').textContent = (data.gini || 0.35).toFixed(5);
 
-                // Render Blocks
                 const tbody = document.getElementById('block-table-body');
                 if (data.recent_blocks && data.recent_blocks.length > 0) {
                     tbody.innerHTML = '';
@@ -103,25 +101,21 @@ async function handleRequest(request) {
                         
                         const tr = document.createElement('tr');
                         tr.onclick = () => toggleDetails(rowId);
-                        tr.innerHTML = \`
-                            <td>#\${block.height}</td>
-                            <td class="hash-link">\${block.hash.slice(0, 16)}...</td>
-                            <td>\${block.miner.slice(0, 8)}...</td>
-                            <td>\${time}</td>
-                        \`;
+                        tr.innerHTML = '<td>#' + block.height + '</td>' +
+                                       '<td class="hash-link">' + block.hash.slice(0, 16) + '...</td>' +
+                                       '<td>' + block.miner.slice(0, 8) + '...</td>' +
+                                       '<td>' + time + '</td>';
                         
                         const detailsTr = document.createElement('tr');
-                        detailsTr.innerHTML = \`
-                            <td colspan="4" style="padding: 0; border: none;">
-                                <div class="block-details" id="\${rowId}">
-                                    <strong>Full Hash:</strong> \${block.hash}<br>
-                                    <strong>Miner ID:</strong> \${block.miner}<br>
-                                    <strong>Nonce:</strong> \${block.nonce}<br>
-                                    <strong>Difficulty:</strong> \${block.difficulty} bits<br>
-                                    <strong>Timestamp:</strong> \${block.timestamp} (\${new Date(block.timestamp*1000).toISOString()})
-                                </div>
-                            </td>
-                        \`;
+                        detailsTr.innerHTML = '<td colspan="4" style="padding: 0; border: none;">' +
+                                                '<div class="block-details" id="' + rowId + '">' +
+                                                    '<strong>Full Hash:</strong> ' + block.hash + '<br>' +
+                                                    '<strong>Miner ID:</strong> ' + block.miner + '<br>' +
+                                                    '<strong>Nonce:</strong> ' + block.nonce + '<br>' +
+                                                    '<strong>Difficulty:</strong> ' + block.difficulty + ' bits<br>' +
+                                                    '<strong>Timestamp:</strong> ' + block.timestamp + ' (' + new Date(block.timestamp*1000).toISOString() + ')' +
+                                                '</div>' +
+                                              '</td>';
                         
                         tbody.appendChild(tr);
                         tbody.appendChild(detailsTr);
