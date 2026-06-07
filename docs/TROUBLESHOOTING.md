@@ -39,6 +39,12 @@ This guide covers common issues encountered by operators when deploying SEER Net
 - To "backup," you can copy the value of this key from the Cloudflare Dashboard.
 - **Warning:** Never share your `privateKeyBase64` with anyone.
 
+### Q: What happened to my old balance? (The June 7 Reset)
+**A:** On June 7th, 2026, the network was reset to **Block 0** to finalize the cryptographic protocol.
+- All previous balances were cleared.
+- This was a one-time event to transition from the "Sketch" phase to the "Honest" phase.
+- Moving forward, the chain state is protected by strict SHA-256d verification and Ed25519 signatures.
+
 ---
 
 ## 🛠️ Expert Tip: The Pattern
