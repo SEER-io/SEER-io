@@ -140,7 +140,8 @@ async function handleTelegramUpdate(update, env) {
   const text = update.message.text;
 
   if (text === "/start") {
-    await sendTgMessage(chatId, "👁️ SEER Node Bot v1.0.0\n\nWelcome operator!\n\n/send <address> <amount>\n/status - Wallet details\n/mempool - View synced txs");
+    const url = "https://seer-node-001.toon-satoshi.workers.dev";
+    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n📡 **MEMPOOL SYNC**:\nPlease join the @seer_miner_channel to sync transactions. \n⚠️ **IMPORTANT**: Turn OFF notifications for that channel to avoid noise.\n\n🔗 Dashboard Link: ${url}`);
   } else if (text.startsWith("/send")) {
     const parts = text.split(" ");
     if (parts.length < 3) return sendTgMessage(chatId, "Usage: /send <address> <amount>");

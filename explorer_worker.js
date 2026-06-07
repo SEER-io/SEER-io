@@ -53,7 +53,7 @@ async function handleRequest(request) {
                 <input type="text" id="bot-username" placeholder="@your_node_bot">
                 <button class="btn" onclick="registerBot()">REGISTER NODE</button>
             </div>
-            <div class="warning">⚠️ OPERATORS: DO NOT JOIN THE MINER CHANNEL. BOTS ONLY. FREQUENT DATA FLOOD.</div>
+            <div class="warning">⚠️ OPERATORS: MUTE THE MINER CHANNEL. HIGH-FREQUENCY DATA FEED.</div>
         </div>
 
         <div class="grid">
