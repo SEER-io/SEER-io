@@ -23,20 +23,13 @@ export default {
           network_name: "SEER Mainnet"
         };
         
-        // Count Active Engines
-        const engineList = await env.NETWORK_STATE.list({ prefix: "engine:" });
-        let cloudCount = 0;
-        let localCount = 0;
-        for (const key of engineList.keys) {
-          if (key.name.endsWith(":Cloud")) cloudCount++;
-          if (key.name.endsWith(":Local")) localCount++;
-        }
-        state.cloud_engines = cloudCount;
-        state.local_engines = localCount;
+        // OPTIMIZATION: Use cached engine counts instead of list() to stay within free tier limits
+        const stats = await env.NETWORK_STATE.get("engine_stats", { type: "json" }) || { cloud: 1, local: 0 };
+        state.cloud_engines = stats.cloud;
+        state.local_engines = stats.local;
 
-        // Swarm Count
-        const swarmList = await env.NETWORK_STATE.list({ prefix: "swarm:" });
-        state.swarm_bots = swarmList.keys.length;
+        // Swarm Count (cached)
+        state.swarm_bots = await env.NETWORK_STATE.get("swarm_count") || "1";
 
         // Get Recent Blocks
         state.recent_blocks = await env.NETWORK_STATE.get("recent_blocks", { type: "json" }) || [];
@@ -52,8 +45,6 @@ export default {
         const { bot_username } = await request.json();
         const username = bot_username.replace("@", "").trim();
 
-        // 1. Verify Bot on Telegram
-        // We use our Genesis Bot token to check the user info
         const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${username}`);
         const tgData = await tgRes.json();
 
@@ -64,36 +55,45 @@ export default {
           }), { status: 400, headers: corsHeaders });
         }
 
-        // 2. Add to Swarm
         await env.NETWORK_STATE.put(`swarm:${username}`, JSON.stringify({
           username,
           registered_at: Date.now()
         }));
+        
+        // Increment swarm count
+        let count = parseInt(await env.NETWORK_STATE.get("swarm_count") || "0");
+        await env.NETWORK_STATE.put("swarm_count", (count + 1).toString());
 
-        // 3. Genesis Bot Announces
         await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            chat_id: "-1003997728534", // Master Channel
-            text: `🛰 <b>SWARM NODE REGISTERED</b>\nBot: @${username}\nStatus: ACTIVE\n\n<i>Note: New bot added to the global signal registry.</i>`,
+            chat_id: "-1003997728534", 
+            text: `🛰 <b>SWARM NODE REGISTERED</b>\nBot: @${username}\nStatus: ACTIVE`,
             parse_mode: "HTML"
           })
         });
 
-        return new Response(JSON.stringify({ success: true, message: "Bot added to the swarm registry." }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       }
 
       if (url.pathname === "/heartbeat" && request.method === "POST") {
         const data = await request.json();
-        await env.NETWORK_STATE.put(`engine:${data.miner_id}:${data.engine_type}`, Date.now().toString(), { expirationTtl: 300 });
-        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
-      }
+        // We still store individual heartbeats for engine list retrieval if needed
+        await env.NETWORK_STATE.put(`engine:${data.miner_id}:${data.engine_type}`, Date.now().toString(), { expirationTtl: 600 });
+        
+        // Aggressive Optimization: Recalculate stats only occasionally on heartbeat
+        if (Math.random() < 0.1) {
+            const engineList = await env.NETWORK_STATE.list({ prefix: "engine:" });
+            let cloud = 0, local = 0;
+            for (const key of engineList.keys) {
+                if (key.name.endsWith(":Cloud")) cloud++;
+                if (key.name.endsWith(":Local")) local++;
+            }
+            await env.NETWORK_STATE.put("engine_stats", JSON.stringify({ cloud, local }));
+        }
 
-      if (url.pathname === "/engines" && request.method === "GET") {
-        const miner_id = url.searchParams.get("miner_id");
-        const list = await env.NETWORK_STATE.list({ prefix: `engine:${miner_id}:` });
-        return new Response(JSON.stringify({ engines: list.keys.map(k => k.name.split(':').pop()) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       }
 
       if (url.pathname === "/miner-stats" && request.method === "GET") {
@@ -140,7 +140,7 @@ export default {
           staking_ratio: Number(stakingRatio.toFixed(6)),
           market_cap: 0,
           ton_bridge_active: false,
-          api_version: "ORACLE-v1.4"
+          api_version: "ORACLE-v1.5"
         };
         
         await env.NETWORK_STATE.put("latest", JSON.stringify(newState));

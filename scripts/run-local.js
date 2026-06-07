@@ -44,62 +44,50 @@ const BOT_STATE = {
   }
 };
 
-// Import worker logic safely
 const workerPath = path.join(__dirname, '../bot_node_worker.js');
 let workerCode = fs.readFileSync(workerPath, 'utf8');
 workerCode = workerCode.replace('export default', 'const worker = ');
 workerCode += '\nmodule.exports = worker;';
 
-const tmpWorkerPath = path.join(__dirname, `tmp_worker_${Date.now()}.js`);
+const tmpWorkerPath = path.join(__dirname, `tmp_worker_local.js`);
 fs.writeFileSync(tmpWorkerPath, workerCode);
 const worker = require(tmpWorkerPath);
-fs.unlinkSync(tmpWorkerPath); 
+fs.unlinkSync(tmpWorkerPath);
 
 const env = { BOT_STATE };
 
 console.log(`👁️ SEER LOCAL RUNNER STARTING...`);
 console.log(`Node Name: ${config.node_name}`);
 
-async function pollLoop() {
-  try {
-    const offset = await BOT_STATE.get("tg_offset") || 0;
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset}&timeout=30`);
-    const data = await res.json();
-    
-    if (data.ok && data.result.length > 0) {
-      let maxId = offset;
-      for (const update of data.result) {
-        // Manually handle the update through worker.fetch
-        const cfRequest = {
-            url: `http://localhost:8080/telegram-webhook`,
-            method: 'POST',
-            json: async () => update,
-            headers: new Map([['content-type', 'application/json']])
-        };
-        await worker.fetch(cfRequest, env, { waitUntil: (p) => p });
-        maxId = Math.max(maxId, update.update_id + 1);
-      }
-      await BOT_STATE.put("tg_offset", maxId.toString());
-    }
-  } catch (e) {
-    console.error("Polling error:", e.message);
-  }
-  setTimeout(pollLoop, 1000);
-}
+// Global to track if mining is in progress
+let isMining = false;
 
-async function miningLoop() {
-  console.log("⛏️ Starting mining cycle...");
-  const settings = await BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true };
-  if (settings.mining_enabled) {
-    await worker.scheduled(null, env, { waitUntil: (p) => p });
+async function runCycle() {
+  if (isMining) return;
+  isMining = true;
+  console.log("⛏️ Starting scheduled cycle (Heartbeat + Sync + Mining)...");
+  
+  const pending = [];
+  const ctx = {
+    waitUntil: (promise) => pending.push(promise)
+  };
+
+  try {
+    await worker.scheduled(null, env, ctx);
+    // Wait for all background tasks (mining, polling, heartbeats)
+    await Promise.all(pending);
+  } catch (e) {
+    console.error("Cycle error:", e.message);
+  } finally {
+    isMining = false;
+    console.log("💤 Cycle finished. Sleeping for 60s.");
+    setTimeout(runCycle, 60000);
   }
-  setTimeout(miningLoop, 60000);
 }
 
 const http = require('http');
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', async () => {
@@ -110,10 +98,12 @@ const server = http.createServer(async (req, res) => {
             text: async () => body,
             headers: new Map(Object.entries(req.headers))
         };
-
         try {
             const response = await worker.fetch(cfRequest, env, { waitUntil: (p) => p });
-            res.writeHead(response.status || 200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.writeHead(response.status || 200, { 
+                'Content-Type': 'application/json', 
+                'Access-Control-Allow-Origin': '*' 
+            });
             res.end(await response.text());
         } catch (e) {
             res.writeHead(500);
@@ -122,8 +112,7 @@ const server = http.createServer(async (req, res) => {
     });
 });
 
-server.listen(8080, () => {
-    console.log("🌐 Local Dashboard & API live at http://localhost:8080");
-    pollLoop();
-    miningLoop();
+server.listen(8080, '127.0.0.1', () => {
+    console.log("🌐 Local Dashboard & API live at http://127.0.0.1:8080");
+    runCycle();
 });
