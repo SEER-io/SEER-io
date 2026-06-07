@@ -20,13 +20,22 @@ export default {
       const lastReq = await env.BOT_STATE.get("last_request") || "None";
       const identity = await getOrCreateIdentity(env);
       
+      // Get global metrics to show in mini app
+      let globalState = { velocity: 0.002, staking_ratio: 0.15 };
+      try {
+        const res = await env.COORDINATOR.fetch(new Request("https://coordinator/network-state"));
+        globalState = await res.json();
+      } catch (e) {}
+
       return new Response(JSON.stringify({ 
         ...state, 
         ...settings, 
         node_id: identity.adnl_id, 
         public_key: identity.publicKeyHex,
         last_log: lastLog, 
-        last_request: lastReq 
+        last_request: lastReq,
+        global_velocity: globalState.velocity,
+        global_staking: globalState.staking_ratio
       }), { 
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
       });
@@ -71,7 +80,6 @@ async function getOrCreateIdentity(env) {
   let stored = await env.BOT_STATE.get("identity", { type: "json" });
   if (stored) return stored;
 
-  // Generate real Ed25519 keypair
   const keyPair = await crypto.subtle.generateKey(
     { name: "Ed25519", namedCurve: "Ed25519" },
     true,
@@ -82,8 +90,6 @@ async function getOrCreateIdentity(env) {
   const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
 
   const publicKeyHex = bytesToHex(new Uint8Array(publicKey));
-  
-  // Derive ADNL ID: SHA256(public_key)
   const adnlHash = await crypto.subtle.digest("SHA-256", publicKey);
   const adnl_id = bytesToHex(new Uint8Array(adnlHash)).slice(0, 24);
 
@@ -100,7 +106,6 @@ async function getOrCreateIdentity(env) {
 async function performMining(env) {
   const start = Date.now();
   try {
-    // 1. Get current network state
     let res;
     if (env.COORDINATOR) {
       res = await env.COORDINATOR.fetch(new Request("https://coordinator/network-state"));
@@ -122,24 +127,14 @@ async function performMining(env) {
     const prevHash = hexToBytes(netState.latest_hash || "0000000000000000000000000000000000000000000000000000000000000000");
     const identity = await getOrCreateIdentity(env);
     
-    // Header Structure (92 bytes):
-    // 0..8: height (LE)
-    // 8..40: prev_hash
-    // 40..72: tx_root
-    // 72..80: timestamp (LE)
-    // 80..84: difficulty (LE)
-    // 84..92: nonce (LE)
-    
     const buffer = new ArrayBuffer(92);
     const view = new DataView(buffer);
     const uint8 = new Uint8Array(buffer);
     
     view.setBigUint64(0, BigInt(targetHeight), true);
     uint8.set(prevHash, 8);
-    // tx_root (all zeros for now)
-    view.setUint32(80, 16, true); // Difficulty 16
+    view.setUint32(80, 16, true);
 
-    // Attempt 50,000 nonces (lower for CPU limits with strict hashing)
     for (let i = 0; i < 50000; i++) {
       const nonce = BigInt(Math.floor(Math.random() * 2000000000));
       const timestamp = BigInt(Math.floor(Date.now() / 1000));
@@ -151,7 +146,6 @@ async function performMining(env) {
       const hash2 = await crypto.subtle.digest("SHA-256", hash1);
       const hashArray = new Uint8Array(hash2);
       
-      // 16-bit difficulty check
       if (hashArray[0] === 0 && hashArray[1] === 0) {
         const hashHex = bytesToHex(hashArray);
         
@@ -190,7 +184,7 @@ async function performMining(env) {
         }
       }
     }
-    await env.BOT_STATE.put("last_mining_log", `Cycle finished. 50k strict hashes tried. No block.`);
+    await env.BOT_STATE.put("last_mining_log", `Cycle finished. 50k hashes tried. No block.`);
   } catch (e) {
     await env.BOT_STATE.put("last_mining_log", `Error: ${e.message}`);
   }
@@ -232,7 +226,7 @@ async function handleTelegramUpdate(update, env) {
     const identity = await getOrCreateIdentity(env);
     await sendTgMessage(chatId, `📊 ${settings.node_name} STATUS\nHeight: ${state.height}\nBlocks Mined: ${state.blocks_mined}\nMining: ${settings.mining_enabled ? 'ON' : 'OFF'}\nNode ID: ${identity.adnl_id}`);
   } else if (text === "/mine") {
-    await sendTgMessage(chatId, "⛏️ Manual mining attempt started (Strict 92-byte Protocol)...");
+    await sendTgMessage(chatId, "⛏️ Manual mining attempt started (Oracle-Enhanced)...");
     const result = await performMining(env);
     if (result) {
       await sendTgMessage(chatId, `✅ Block mined! Height: ${result.height}\nHash: ${result.hash.slice(0, 16)}...`);
@@ -293,7 +287,7 @@ function generateDashboardHTML() {
         .btn:hover { opacity: 0.8; }
         .status-dot { height: 10px; width: 10px; background-color: #00f2ff; border-radius: 50%; display: inline-block; margin-right: 8px; box-shadow: 0 0 10px var(--neon-blue); }
         .mining-active { animation: pulse 2s infinite; }
-        .console { background: #000; border: 1px solid #222; border-radius: 8px; padding: 15px; margin-top: 20px; font-family: 'Courier New', monospace; height: 120px; overflow-y: hidden; font-size: 0.7rem; color: #00ff00; opacity: 0.8; }
+        .console { background: #000; border: 1px solid #222; border-radius: 8px; padding: 10px; margin-top: 20px; font-family: 'Courier New', monospace; height: 100px; overflow-y: hidden; font-size: 0.7rem; color: #00ff00; opacity: 0.8; }
         .log-entry { margin-bottom: 4px; white-space: nowrap; }
         .progress-container { width: 100%; background: #222; border-radius: 10px; height: 4px; margin-top: 10px; overflow: hidden; }
         .progress-bar { width: 0%; height: 100%; background: var(--neon-blue); box-shadow: 0 0 10px var(--neon-blue); transition: width 0.1s; }
@@ -315,6 +309,14 @@ function generateDashboardHTML() {
         <div class="stat-row">
             <span class="stat-label">Blocks Mined</span>
             <span class="stat-value" id="blocks-mined">0</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Network Velocity</span>
+            <span class="stat-value" id="global-velocity">0.000</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Staking Intensity</span>
+            <span class="stat-value" id="global-staking">0.00%</span>
         </div>
         <div class="stat-row">
             <span class="stat-label">Status</span>
@@ -358,6 +360,10 @@ function generateDashboardHTML() {
             document.getElementById('mining-toggle').checked = data.mining_enabled;
             document.getElementById('last-log-display').textContent = "Last: " + data.last_log;
             
+            // Oracle Metrics
+            document.getElementById('global-velocity').textContent = (data.global_velocity || 0.002).toFixed(3);
+            document.getElementById('global-staking').textContent = ((data.global_staking || 0.15) * 100).toFixed(2) + '%';
+            
             const statusText = data.mining_enabled ? "MINING" : "IDLE";
             document.getElementById('status-text').textContent = statusText;
             
@@ -389,19 +395,16 @@ function generateDashboardHTML() {
             const progressBar = document.getElementById('mining-progress');
             
             if (toggle.checked) {
-                // Generate a fake hash for visual effect
                 const hash = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
                 const entry = document.createElement('div');
                 entry.className = 'log-entry';
                 entry.textContent = '> HASH: ' + hash.slice(0, 24) + '... (nonce: ' + Math.floor(Math.random() * 10000) + ')';
                 consoleBox.appendChild(entry);
                 
-                // Keep the last 6 entries
-                while (consoleBox.childNodes.length > 6) {
+                while (consoleBox.childNodes.length > 5) {
                     consoleBox.removeChild(consoleBox.firstChild);
                 }
                 
-                // Animate progress bar
                 let progress = parseFloat(progressBar.style.width || "0");
                 progress = (progress + (Math.random() * 10)) % 101;
                 progressBar.style.width = progress + "%";

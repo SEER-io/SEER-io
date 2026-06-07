@@ -19,7 +19,12 @@ export default {
           latest_hash: "0000000000000000000000000000000000000000000000000000000000000000",
           total_supply: 100000000,
           active_nodes: 1,
-          network_name: "SEER Mainnet"
+          network_name: "SEER Mainnet",
+          velocity: 0.002,
+          sentiment: 0.5,
+          gini: 0.35,
+          staking_ratio: 0.15,
+          market_cap: 1000
         };
         return new Response(JSON.stringify(state), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -29,59 +34,69 @@ export default {
       if (url.pathname === "/submit-block" && request.method === "POST") {
         const block = await request.json();
         
-        // --- PRIORITY 1: CRYPTOGRAPHIC VERIFICATION ---
-        
         // 1. Reconstruct 92-byte header
         const buffer = new ArrayBuffer(92);
         const view = new DataView(buffer);
-        
-        // height (8 bytes, LE)
         const height = BigInt(block.height);
         view.setBigUint64(0, height, true);
-        
-        // prev_hash (32 bytes)
         const prevHash = hexToBytes(block.prev_hash);
         new Uint8Array(buffer).set(prevHash, 8);
-        
-        // tx_root (32 bytes)
         const txRoot = hexToBytes(block.tx_root || "0000000000000000000000000000000000000000000000000000000000000000");
         new Uint8Array(buffer).set(txRoot, 40);
-        
-        // timestamp (8 bytes, LE)
         view.setBigUint64(72, BigInt(block.timestamp), true);
-        
-        // difficulty (4 bytes, LE)
         view.setUint32(80, block.difficulty || 16, true);
-        
-        // nonce (8 bytes, LE)
         view.setBigUint64(84, BigInt(block.nonce), true);
         
-        // 2. Compute SHA256d (Double SHA-256)
+        // 2. Double SHA-256
         const hash1 = await crypto.subtle.digest("SHA-256", buffer);
         const hash2 = await crypto.subtle.digest("SHA-256", hash1);
         const computedHashHex = bytesToHex(new Uint8Array(hash2));
         
-        // 3. Verify Hash matches submission
         if (computedHashHex !== block.hash) {
           return new Response(JSON.stringify({ error: "Hash mismatch" }), { status: 400, headers: corsHeaders });
         }
         
-        // 4. Verify Difficulty (16-bit leading zero check)
         const hashBytes = new Uint8Array(hash2);
-        const targetDifficulty = block.difficulty || 16;
-        if (!verifyDifficulty(hashBytes, targetDifficulty)) {
+        if (!verifyDifficulty(hashBytes, block.difficulty || 16)) {
           return new Response(JSON.stringify({ error: "Insufficient difficulty" }), { status: 400, headers: corsHeaders });
         }
         
-        // 5. Update global state
+        // 3. Oracle-enhanced Tokenomics (derived from tokenomics_oracle.py)
+        const prevState = await env.NETWORK_STATE.get("latest", { type: "json" }) || {
+          total_supply: 100000000,
+          velocity: 0.002,
+          sentiment: 0.5,
+          gini: 0.35
+        };
+
         const reward = 50;
+        const newSupply = prevState.total_supply + reward;
+        
+        // Dynamic metrics simulation (matching tokenomics_oracle.py formulas)
+        const tick = Number(height);
+        const sentiment = Math.max(0.1, Math.min(0.9, prevState.sentiment + (Math.random() * 0.02 - 0.01)));
+        const velocity = Math.max(0.001, Math.min(0.01, prevState.velocity + (Math.random() * 0.0005 - 0.0002)));
+        const gini = Math.max(0.1, Math.min(0.9, prevState.gini + (Math.random() * 0.01 - 0.005)));
+        
+        // staking_ratio = max(0.08, min(0.92, 0.18 + (gini * 0.72) + sin(tick/137)*0.07 + (sentiment*0.25)))
+        const stakingRatio = Math.max(0.08, Math.min(0.92, 0.18 + (gini * 0.72) + Math.sin(tick / 137) * 0.07 + (sentiment * 0.25)));
+        
+        // market_cap_proxy = (supply * (1.35 + velocity * 1.1 - gini * 0.65)) / 7.5
+        const marketCap = (newSupply * (1.35 + velocity * 1.1 - gini * 0.65)) / 7.5;
+
         const newState = {
           latest_block: Number(height),
           latest_hash: computedHashHex,
-          total_supply: 100000000 + (Number(height) * reward),
+          total_supply: newSupply,
           active_nodes: 1,
-          network_name: "SEER Mainnet"
+          network_name: "SEER Mainnet",
+          velocity: velocity,
+          sentiment: sentiment,
+          gini: gini,
+          staking_ratio: stakingRatio,
+          market_cap: marketCap
         };
+        
         await env.NETWORK_STATE.put("latest", JSON.stringify(newState));
         
         return new Response(JSON.stringify({ status: "Accepted", hash: computedHashHex }), {
