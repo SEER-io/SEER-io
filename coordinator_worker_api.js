@@ -24,9 +24,10 @@ export default {
           sentiment: 0.5,
           gini: 0.35,
           staking_ratio: 0.15,
-          market_cap: 1000
+          market_cap: 0, // HONEST VALUATION: No liquidity yet
+          ton_bridge_active: false
         };
-        state.api_version = "ORACLE-v1.0";
+        state.api_version = "ORACLE-v1.2";
         return new Response(JSON.stringify(state), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
@@ -38,8 +39,7 @@ export default {
         // 1. Reconstruct 92-byte header
         const buffer = new ArrayBuffer(92);
         const view = new DataView(buffer);
-        const height = BigInt(block.height);
-        view.setBigUint64(0, height, true);
+        view.setBigUint64(0, BigInt(block.height), true);
         const prevHash = hexToBytes(block.prev_hash);
         new Uint8Array(buffer).set(prevHash, 8);
         const txRoot = hexToBytes(block.tx_root || "0000000000000000000000000000000000000000000000000000000000000000");
@@ -62,9 +62,8 @@ export default {
           return new Response(JSON.stringify({ error: "Insufficient difficulty" }), { status: 400, headers: corsHeaders });
         }
         
-        // 3. Oracle-enhanced Tokenomics (derived from tokenomics_oracle.py)
+        // 3. Oracle Tokenomics (Market Cap strictly 0 until TON Bridge / Liquidity exists)
         const prevState = await env.NETWORK_STATE.get("latest", { type: "json" }) || {};
-        
         const prevSupply = Number(prevState.total_supply) || 100000000;
         const prevSentiment = Number(prevState.sentiment) || 0.5;
         const prevVelocity = Number(prevState.velocity) || 0.002;
@@ -72,14 +71,12 @@ export default {
 
         const reward = 50;
         const newSupply = prevSupply + reward;
-        
         const tick = Number(block.height) || 0;
+        
         const sentiment = Math.max(0.1, Math.min(0.9, prevSentiment + (Math.random() * 0.02 - 0.01)));
         const velocity = Math.max(0.001, Math.min(0.01, prevVelocity + (Math.random() * 0.0005 - 0.0002)));
         const gini = Math.max(0.1, Math.min(0.9, prevGini + (Math.random() * 0.01 - 0.005)));
-        
         const stakingRatio = Math.max(0.08, Math.min(0.92, 0.18 + (gini * 0.72) + Math.sin(tick / 137) * 0.07 + (sentiment * 0.25)));
-        const marketCap = (newSupply * (1.35 + velocity * 1.1 - gini * 0.65)) / 7.5;
 
         const newState = {
           latest_block: tick,
@@ -91,8 +88,9 @@ export default {
           sentiment: Number(sentiment.toFixed(6)),
           gini: Number(gini.toFixed(6)),
           staking_ratio: Number(stakingRatio.toFixed(6)),
-          market_cap: Number(marketCap.toFixed(2)),
-          api_version: "ORACLE-v1.1"
+          market_cap: 0, // HONEST VALUATION: Worthless without liquidity pool
+          ton_bridge_active: false,
+          api_version: "ORACLE-v1.2"
         };
         
         await env.NETWORK_STATE.put("latest", JSON.stringify(newState));

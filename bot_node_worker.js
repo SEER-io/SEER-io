@@ -19,7 +19,7 @@ export default {
       const lastReq = await env.BOT_STATE.get("last_request") || "None";
       const identity = await getOrCreateIdentity(env);
       
-      let globalState = { velocity: 0.002, staking_ratio: 0.15, total_supply: 100000000, market_cap: 15000000 };
+      let globalState = { velocity: 0.002, staking_ratio: 0.15, total_supply: 100000000, market_cap: 0, ton_bridge_active: false };
       try {
         const res = await env.COORDINATOR.fetch(new Request("https://coordinator/network-state"));
         globalState = await res.json();
@@ -35,7 +35,8 @@ export default {
         global_velocity: globalState.velocity,
         global_staking: globalState.staking_ratio,
         global_supply: globalState.total_supply,
-        global_mcap: globalState.market_cap
+        global_mcap: globalState.market_cap,
+        bridge_active: globalState.ton_bridge_active
       }), { 
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
       });
@@ -164,7 +165,7 @@ async function performMining(env) {
           let localState = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0, earned_seer: 0 };
           localState.height = targetHeight;
           localState.blocks_mined++;
-          localState.earned_seer += 50; // Block Reward
+          localState.earned_seer += 50; 
           await env.BOT_STATE.put("node_state", JSON.stringify(localState));
           await env.BOT_STATE.put("last_mining_log", `Success! Block ${targetHeight} mined. +50 SEER earned.`);
           return { height: targetHeight, hash: hashHex };
@@ -251,19 +252,19 @@ function generateDashboardHTML() {
         .balance-box { text-align: center; margin-bottom: 25px; }
         .balance-amount { font-size: 2.5rem; font-weight: 800; color: var(--neon-blue); }
         .balance-label { font-size: 0.8rem; opacity: 0.5; text-transform: uppercase; letter-spacing: 1px; }
-        .value-est { color: #00ff00; font-size: 0.9rem; font-weight: bold; margin-top: 5px; }
+        .value-est { color: #ff0000; font-size: 0.9rem; font-weight: bold; margin-top: 5px; }
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
         .stat-item { background: #0a0a0a; padding: 12px; border-radius: 10px; border: 1px solid #222; }
         .stat-l { font-size: 0.65rem; opacity: 0.5; text-transform: uppercase; }
         .stat-v { font-size: 1rem; font-weight: bold; color: var(--neon-blue); }
-        .console { background: #000; border-radius: 10px; padding: 12px; font-family: 'Courier New', monospace; height: 100px; overflow: hidden; font-size: 0.7rem; color: #00ff00; border: 1px solid #222; }
-        .log-entry { margin-bottom: 2px; }
+        .console { background: #000; border-radius: 10px; padding: 12px; font-family: 'Courier New', monospace; height: 100px; overflow: hidden; font-size: 0.7rem; color: #00ff00; border: 1px solid #222; word-break: break-all; }
         .btn { background: var(--neon-blue); color: #000; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 15px; }
         .mining-dot { height: 8px; width: 8px; background-color: var(--neon-blue); border-radius: 50%; display: inline-block; margin-right: 5px; }
         .mining-active { animation: pulse 1s infinite; }
         @keyframes pulse { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
         .progress-bar { width: 100%; background: #222; height: 3px; border-radius: 10px; margin-top: 8px; overflow: hidden; }
         .progress-fill { height: 100%; background: var(--neon-blue); width: 0%; transition: width 0.2s; }
+        .bridge-pill { background: #330000; color: #ff0000; font-size: 0.6rem; padding: 2px 6px; border-radius: 4px; border: 1px solid #ff0000; margin-left: 5px; }
     </style>
 </head>
 <body>
@@ -277,7 +278,7 @@ function generateDashboardHTML() {
             <div class="balance-label">Your Earnings</div>
             <div class="balance-amount" id="earned-seer">0</div>
             <div style="font-size: 0.8rem; opacity: 0.8;">SEER</div>
-            <div class="value-est" id="earned-usd">$0.00</div>
+            <div class="value-est" id="earned-usd">$0.00 <span class="bridge-pill">NO LIQUIDITY</span></div>
         </div>
 
         <div class="stats-grid">
@@ -325,10 +326,8 @@ function generateDashboardHTML() {
             document.getElementById('last-log').textContent = data.last_log;
             document.getElementById('node-name-input').value = data.node_name;
             
-            // Value Calculation
-            const pricePerToken = (data.global_mcap / data.global_supply) || 0;
-            const usdValue = (data.earned_seer || 0) * pricePerToken;
-            document.getElementById('earned-usd').textContent = '$' + usdValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            // Value Calculation (Strictly 0 for now)
+            document.getElementById('earned-usd').textContent = '$0.00';
             
             if(data.mining_enabled) document.getElementById('mining-dot').classList.add('mining-active');
             else document.getElementById('mining-dot').classList.remove('mining-active');
@@ -354,10 +353,10 @@ function generateDashboardHTML() {
             const color = '#' + Math.floor(Math.random()*16777215).toString(16);
             const entry = document.createElement('span');
             entry.style.color = color;
-            entry.textContent = char + ' ';
+            entry.textContent = char;
             
             consoleBox.appendChild(entry);
-            if (consoleBox.childNodes.length > 150) consoleBox.removeChild(consoleBox.firstChild);
+            if (consoleBox.childNodes.length > 250) consoleBox.removeChild(consoleBox.firstChild);
             
             let p = parseFloat(fill.style.width || "0");
             fill.style.width = ((p + 2) % 101) + "%";
@@ -365,7 +364,7 @@ function generateDashboardHTML() {
 
         fetchStats();
         setInterval(fetchStats, 10000);
-        setInterval(updateConsole, 100);
+        setInterval(updateConsole, 50);
     </script>
 </body>
 </html>`;
