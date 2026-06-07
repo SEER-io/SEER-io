@@ -13,6 +13,7 @@ export default {
 
     if (url.pathname === "/status") {
       const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0, earned_seer: 0 };
+      if (!state.earned_seer) state.earned_seer = 0;
       const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
       const lastLog = await env.BOT_STATE.get("last_mining_log") || "No logs yet.";
       const lastReq = await env.BOT_STATE.get("last_request") || "None";
