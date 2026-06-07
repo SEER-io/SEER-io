@@ -1,3 +1,4 @@
+name = "seer-network"
 pages_build_output_dir = "explorer"
 
 [[kv_namespaces]]
