@@ -7,7 +7,7 @@ export default {
     await env.BOT_STATE.put("last_request", `${request.method} ${url.pathname} at ${new Date().toISOString()}`);
 
     // 1. Handle Telegram Webhooks
-    if (request.method === "POST" && url.pathname.includes(BOT_TOKEN)) {
+    if (request.method === "POST" && url.pathname === "/telegram-webhook") {
       const update = await request.json();
       return handleTelegramUpdate(update, env);
     }
@@ -38,16 +38,45 @@ export default {
       return new Response(generateDashboardHTML(), { headers: { "Content-Type": "text/html" } });
     }
 
+    if (url.pathname === "/mine-test") {
+      const result = await performMining(env);
+      return new Response(JSON.stringify({ result }), { headers: { "Content-Type": "application/json" } });
+    }
+
     return new Response("SEER Bot Node Live");
   },
 
   async scheduled(event, env, ctx) {
     const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true };
+    
+    // 1. Process pending Telegram updates (Polling Fallback)
+    ctx.waitUntil(pollTelegramUpdates(env));
+
+    // 2. Perform Mining
     if (settings.mining_enabled) {
       ctx.waitUntil(performMining(env));
     }
   }
 };
+
+async function pollTelegramUpdates(env) {
+  try {
+    const offset = await env.BOT_STATE.get("tg_offset") || 0;
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset}&timeout=0`);
+    const data = await res.json();
+    
+    if (data.ok && data.result.length > 0) {
+      let maxId = offset;
+      for (const update of data.result) {
+        await handleTelegramUpdate(update, env);
+        maxId = Math.max(maxId, update.update_id + 1);
+      }
+      await env.BOT_STATE.put("tg_offset", maxId.toString());
+    }
+  } catch (e) {
+    console.error("Polling failed", e);
+  }
+}
 
 function generateDashboardHTML() {
   return `<!DOCTYPE html>
@@ -249,7 +278,23 @@ async function getNodeID(env) {
 async function performMining(env) {
   const start = Date.now();
   try {
-    const res = await fetch(`${COORDINATOR_URL}/network-state`);
+    // 1. Get current network state
+    // Use Service Binding if available (bypasses Cloudflare loopback restriction)
+    let res;
+    if (env.COORDINATOR) {
+      res = await env.COORDINATOR.fetch(new Request("https://coordinator/network-state"));
+    } else {
+      res = await fetch(`${COORDINATOR_URL}/network-state`, {
+        headers: { "User-Agent": "SEER-Node-Worker" }
+      });
+    }
+    
+    if (!res.ok) {
+      const text = await res.text();
+      await env.BOT_STATE.put("last_mining_log", `Fetch failed: ${res.status} ${text.slice(0, 100)}`);
+      return null;
+    }
+    
     const netState = await res.json();
     
     const currentHeight = netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block);
@@ -257,8 +302,7 @@ async function performMining(env) {
     const prevHash = netState.latest_hash;
     const nodeID = await getNodeID(env);
     
-    // Attempt 100,000 nonces (increased limit)
-    // We use a local loop to minimize TextEncoder overhead
+    // Attempt 100,000 nonces
     const encoder = new TextEncoder();
     const baseData = `${targetHeight}${prevHash}${nodeID}`;
     
@@ -269,20 +313,31 @@ async function performMining(env) {
       const hashBuffer = await crypto.subtle.digest("SHA-256", data);
       const hashArray = new Uint8Array(hashBuffer);
       
-      // 16-bit difficulty (2 bytes zero)
       if (hashArray[0] === 0 && hashArray[1] === 0) {
         const hashHex = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
         
-        const submitRes = await fetch(`${COORDINATOR_URL}/submit-block`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            height: targetHeight,
-            hash: hashHex,
-            nonce: nonce,
-            miner: nodeID
-          })
+        // 3. Submit block
+        const submitBody = JSON.stringify({
+          height: targetHeight,
+          hash: hashHex,
+          nonce: nonce,
+          miner: nodeID
         });
+
+        let submitRes;
+        if (env.COORDINATOR) {
+          submitRes = await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: submitBody
+          }));
+        } else {
+          submitRes = await fetch(`${COORDINATOR_URL}/submit-block`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: submitBody
+          });
+        }
         
         if (submitRes.ok) {
           let localState = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
