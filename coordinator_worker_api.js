@@ -28,12 +28,26 @@ export default {
           ton_bridge_active: false
         };
         
-        // Calculate Percentage Mined (Relative to mineable rewards: 900 Million)
+        // Calculate Percentage Mined
         const mineableRewards = 900000000;
         const rewardsIssued = state.total_supply - 100000000;
         state.percent_mined = (rewardsIssued / mineableRewards) * 100;
+
+        // Count Active Engines
+        const engineList = await env.NETWORK_STATE.list({ prefix: "engine:" });
+        let cloudCount = 0;
+        let localCount = 0;
+        for (const key of engineList.keys) {
+          if (key.name.endsWith(":Cloud")) cloudCount++;
+          if (key.name.endsWith(":Local")) localCount++;
+        }
+        state.cloud_engines = cloudCount;
+        state.local_engines = localCount;
+
+        // Get Recent Blocks
+        state.recent_blocks = await env.NETWORK_STATE.get("recent_blocks", { type: "json" }) || [];
         
-        state.api_version = "ORACLE-v1.3";
+        state.api_version = "ORACLE-v1.4";
         return new Response(JSON.stringify(state), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
@@ -113,13 +127,27 @@ export default {
           staking_ratio: Number(stakingRatio.toFixed(6)),
           market_cap: 0,
           ton_bridge_active: false,
-          api_version: "ORACLE-v1.3"
+          api_version: "ORACLE-v1.4"
         };
         
         await env.NETWORK_STATE.put("latest", JSON.stringify(newState));
         
+        // Update Miner Stats
         let minerBlocks = await env.NETWORK_STATE.get(`miner:${block.miner}:blocks`) || 0;
         await env.NETWORK_STATE.put(`miner:${block.miner}:blocks`, (parseInt(minerBlocks) + 1).toString());
+
+        // Update Recent Blocks
+        const recentBlocks = await env.NETWORK_STATE.get("recent_blocks", { type: "json" }) || [];
+        recentBlocks.unshift({
+          height: tick,
+          hash: computedHashHex,
+          miner: block.miner,
+          timestamp: block.timestamp,
+          nonce: block.nonce,
+          difficulty: block.difficulty || 16
+        });
+        if (recentBlocks.length > 10) recentBlocks.pop();
+        await env.NETWORK_STATE.put("recent_blocks", JSON.stringify(recentBlocks));
 
         return new Response(JSON.stringify({ status: "Accepted", hash: computedHashHex }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
