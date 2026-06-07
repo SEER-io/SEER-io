@@ -43,6 +43,10 @@ async function handleRequest(request) {
                 <span class="stat-value" id="mined-supply">0</span>
             </div>
             <div class="stat-box">
+                <span class="stat-label">Percentage Mined</span>
+                <span class="stat-value" id="percent-mined">0.00%</span>
+            </div>
+            <div class="stat-box">
                 <span class="stat-label">Total Supply</span>
                 <span class="stat-value" id="total-supply">SCANNING...</span>
             </div>
@@ -57,10 +61,6 @@ async function handleRequest(request) {
             <div class="stat-box">
                 <span class="stat-label">Network Velocity</span>
                 <span class="stat-value" id="velocity">0.000</span>
-            </div>
-            <div class="stat-box">
-                <span class="stat-label">Gini Index</span>
-                <span class="stat-value" id="gini">0.00000</span>
             </div>
         </div>
 
@@ -83,10 +83,10 @@ async function handleRequest(request) {
                 
                 document.getElementById('total-supply').textContent = (total / 1000000).toFixed(4) + 'M';
                 document.getElementById('mined-supply').textContent = mined.toLocaleString();
+                document.getElementById('percent-mined').textContent = (data.percent_mined || 0).toFixed(6) + '%';
                 
                 // New Oracle Metrics (Zeroed out for no liquidity)
                 document.getElementById('velocity').textContent = (data.velocity || 0.002).toFixed(3);
-                document.getElementById('gini').textContent = (data.gini || 0.35).toFixed(5);
                 document.getElementById('mcap').textContent = '$0.00M';
                 document.getElementById('bridge-status').textContent = data.ton_bridge_active ? "ACTIVE" : "OFFLINE";
 

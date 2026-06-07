@@ -15,6 +15,7 @@
         .stat-value { font-size: 1.2rem; font-weight: bold; }
         .footer { margin-top: 30px; text-align: center; font-size: 0.7rem; opacity: 0.5; }
         .live-indicator { display: inline-block; width: 10px; height: 10px; background: red; border-radius: 50%; margin-right: 10px; animation: blink 1s infinite; }
+        .alert-pill { background: #330000; color: #ff0000; border: 1px solid #ff0000; padding: 2px 8px; border-radius: 4px; font-size: 0.6rem; vertical-align: middle; margin-left: 5px; }
         @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
     </style>
 </head>
@@ -37,24 +38,24 @@
                 <span class="stat-value" id="mined-supply">0</span>
             </div>
             <div class="stat-box">
+                <span class="stat-label">Percentage Mined</span>
+                <span class="stat-value" id="percent-mined">0.00%</span>
+            </div>
+            <div class="stat-box">
                 <span class="stat-label">Total Supply</span>
                 <span class="stat-value" id="total-supply">SCANNING...</span>
             </div>
             <div class="stat-box">
+                <span class="stat-label">Market Cap Proxy <span class="alert-pill">NO LIQUIDITY</span></span>
+                <span class="stat-value" id="mcap" style="color: #ff0000;">$0.00M</span>
+            </div>
+            <div class="stat-box" style="border-style: dashed; opacity: 0.8;">
+                <span class="stat-label">TON Bridge</span>
+                <span class="stat-value" id="bridge-status">OFFLINE</span>
+            </div>
+            <div class="stat-box">
                 <span class="stat-label">Network Velocity</span>
                 <span class="stat-value" id="velocity">0.000</span>
-            </div>
-            <div class="stat-box">
-                <span class="stat-label">Gini Index</span>
-                <span class="stat-value" id="gini">0.00000</span>
-            </div>
-            <div class="stat-box">
-                <span class="stat-label">Staking Lock</span>
-                <span class="stat-value" id="staking">0.00%</span>
-            </div>
-            <div class="stat-box">
-                <span class="stat-label">Market Cap Proxy</span>
-                <span class="stat-value" id="mcap">$0.00M</span>
             </div>
         </div>
 
@@ -77,12 +78,12 @@
                 
                 document.getElementById('total-supply').textContent = (total / 1000000).toFixed(4) + 'M';
                 document.getElementById('mined-supply').textContent = mined.toLocaleString();
+                document.getElementById('percent-mined').textContent = (data.percent_mined || 0).toFixed(6) + '%';
                 
-                // New Oracle Metrics
+                // New Oracle Metrics (Zeroed out for no liquidity)
                 document.getElementById('velocity').textContent = (data.velocity || 0.002).toFixed(3);
-                document.getElementById('gini').textContent = (data.gini || 0.35).toFixed(5);
-                document.getElementById('staking').textContent = ((data.staking_ratio || 0.15) * 100).toFixed(2) + '%';
-                document.getElementById('mcap').textContent = '$' + ((data.market_cap || 0) / 1000000).toFixed(2) + 'M';
+                document.getElementById('mcap').textContent = '$0.00M';
+                document.getElementById('bridge-status').textContent = data.ton_bridge_active ? "ACTIVE" : "OFFLINE";
 
             } catch (e) {
                 console.error('Update failed:', e);

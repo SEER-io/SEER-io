@@ -27,16 +27,22 @@ export default {
           market_cap: 0,
           ton_bridge_active: false
         };
+        
+        // Calculate Percentage Mined (Relative to mineable rewards: 900 Million)
+        const mineableRewards = 900000000;
+        const rewardsIssued = state.total_supply - 100000000;
+        state.percent_mined = (rewardsIssued / mineableRewards) * 100;
+        
+        state.api_version = "ORACLE-v1.3";
         return new Response(JSON.stringify(state), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
       }
 
-      // Heartbeat to track active engines per miner
       if (url.pathname === "/heartbeat" && request.method === "POST") {
         const data = await request.json();
-        const { miner_id, engine_type } = data; // engine_type: 'Cloud' or 'Local'
-        await env.NETWORK_STATE.put(`engine:${miner_id}:${engine_type}`, Date.now().toString(), { expirationTtl: 300 }); // Expire in 5 mins
+        const { miner_id, engine_type } = data;
+        await env.NETWORK_STATE.put(`engine:${miner_id}:${engine_type}`, Date.now().toString(), { expirationTtl: 300 });
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
       }
 
@@ -56,7 +62,6 @@ export default {
       if (url.pathname === "/submit-block" && request.method === "POST") {
         const block = await request.json();
         
-        // 1. Reconstruct 92-byte header
         const buffer = new ArrayBuffer(92);
         const view = new DataView(buffer);
         view.setBigUint64(0, BigInt(block.height), true);
@@ -68,7 +73,6 @@ export default {
         view.setUint32(80, block.difficulty || 16, true);
         view.setBigUint64(84, BigInt(block.nonce), true);
         
-        // 2. Double SHA-256
         const hash1 = await crypto.subtle.digest("SHA-256", buffer);
         const hash2 = await crypto.subtle.digest("SHA-256", hash1);
         const computedHashHex = bytesToHex(new Uint8Array(hash2));
@@ -82,7 +86,6 @@ export default {
           return new Response(JSON.stringify({ error: "Insufficient difficulty" }), { status: 400, headers: corsHeaders });
         }
         
-        // 3. Oracle Tokenomics
         const prevState = await env.NETWORK_STATE.get("latest", { type: "json" }) || {};
         const prevSupply = Number(prevState.total_supply) || 100000000;
         const prevSentiment = Number(prevState.sentiment) || 0.5;
@@ -110,12 +113,11 @@ export default {
           staking_ratio: Number(stakingRatio.toFixed(6)),
           market_cap: 0,
           ton_bridge_active: false,
-          api_version: "ORACLE-v1.2"
+          api_version: "ORACLE-v1.3"
         };
         
         await env.NETWORK_STATE.put("latest", JSON.stringify(newState));
         
-        // Also track the miner's total blocks in KV
         let minerBlocks = await env.NETWORK_STATE.get(`miner:${block.miner}:blocks`) || 0;
         await env.NETWORK_STATE.put(`miner:${block.miner}:blocks`, (parseInt(minerBlocks) + 1).toString());
 
