@@ -22,17 +22,14 @@ export default {
       let total_miner_blocks = 0;
 
       try {
-        // Fetch Global State
-        const res = await env.COORDINATOR.fetch(new Request("https://coordinator/network-state"));
+        const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
         globalState = await res.json();
         
-        // Fetch Fleet Stats
-        const engineRes = await env.COORDINATOR.fetch(new Request(`https://coordinator/engines?miner_id=${identity.adnl_id}`));
+        const engineRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request(`https://coordinator/engines?miner_id=${identity.adnl_id}`)) : await fetch(`${COORDINATOR_URL}/engines?miner_id=${identity.adnl_id}`);
         const engineData = await engineRes.json();
         engines = engineData.engines;
 
-        // Fetch Aggregated Earnings
-        const minerStatsRes = await env.COORDINATOR.fetch(new Request(`https://coordinator/miner-stats?id=${identity.adnl_id}`));
+        const minerStatsRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request(`https://coordinator/miner-stats?id=${identity.adnl_id}`)) : await fetch(`${COORDINATOR_URL}/miner-stats?id=${identity.adnl_id}`);
         const minerStats = await minerStatsRes.json();
         total_miner_blocks = minerStats.blocks;
       } catch (e) {}
@@ -71,6 +68,22 @@ export default {
       return new Response(JSON.stringify({ result }), { headers: { "Content-Type": "application/json" } });
     }
 
+    if (request.method === "POST" && url.pathname === "/redeem") {
+      try {
+        const { amount, ton_address } = await request.json();
+        const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { earned_seer: 0 };
+        if (!state.earned_seer || state.earned_seer < amount) return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400 });
+        state.earned_seer -= amount;
+        await env.BOT_STATE.put("node_state", JSON.stringify(state));
+        const burn_id = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
+        const request_data = { burn_id, amount, ton_address, node_id: (await getOrCreateIdentity(env)).adnl_id, timestamp: Date.now(), status: "pending" };
+        await env.BOT_STATE.put(`redeem:${burn_id}`, JSON.stringify(request_data));
+        return new Response(JSON.stringify({ success: true, burn_id, message: "Tokens burned. Relayer notified." }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+      }
+    }
+
     return new Response("SEER Bot Node Live");
   },
 
@@ -83,17 +96,25 @@ export default {
   }
 };
 
+async function announceToMasterChannel(text) {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: MASTER_CHANNEL_ID, text: text, parse_mode: "HTML" })
+    });
+  } catch (e) {}
+}
+
 async function getOrCreateIdentity(env) {
   let stored = await env.BOT_STATE.get("identity", { type: "json" });
   if (stored) return stored;
-
   const keyPair = await crypto.subtle.generateKey({ name: "Ed25519", namedCurve: "Ed25519" }, true, ["sign", "verify"]);
   const publicKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
   const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
   const publicKeyHex = bytesToHex(new Uint8Array(publicKey));
   const adnlHash = await crypto.subtle.digest("SHA-256", publicKey);
   const adnl_id = bytesToHex(new Uint8Array(adnlHash)).slice(0, 24);
-
   const identity = { adnl_id, publicKeyHex, privateKeyBase64: btoa(String.fromCharCode(...new Uint8Array(privateKey))) };
   await env.BOT_STATE.put("identity", JSON.stringify(identity));
   await announceToMasterChannel(`🛰 <b>NEW MINER ONLINE</b>\nNode ID: <code>${adnl_id}</code>`);
@@ -107,11 +128,11 @@ async function performMining(env) {
     const identity = await getOrCreateIdentity(env);
     
     // Heartbeat
+    const hbBody = JSON.stringify({ miner_id: identity.adnl_id, engine_type: engineType });
     if (env.COORDINATOR) {
-        await env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", {
-            method: 'POST',
-            body: JSON.stringify({ miner_id: identity.adnl_id, engine_type: engineType })
-        }));
+        await env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", { method: 'POST', body: hbBody }));
+    } else {
+        await fetch(`${COORDINATOR_URL}/heartbeat`, { method: 'POST', headers: { "Content-Type": "application/json" }, body: hbBody });
     }
 
     let res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
@@ -131,14 +152,12 @@ async function performMining(env) {
       const timestamp = BigInt(Math.floor(Date.now() / 1000));
       view.setBigUint64(72, timestamp, true);
       view.setBigUint64(84, nonce, true);
-      
       const hashArray = new Uint8Array(await crypto.subtle.digest("SHA-256", await crypto.subtle.digest("SHA-256", buffer)));
       
       if (hashArray[0] === 0 && hashArray[1] === 0) {
         const hashHex = bytesToHex(hashArray);
         const submitBody = JSON.stringify({ height: targetHeight, prev_hash: bytesToHex(prevHash), timestamp: Number(timestamp), difficulty: 16, nonce: Number(nonce), hash: hashHex, miner: identity.adnl_id });
-
-        let submitRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", { method: "POST", body: submitBody })) : await fetch(`${COORDINATOR_URL}/submit-block`, { method: "POST", body: submitBody });
+        let submitRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", { method: "POST", body: submitBody })) : await fetch(`${COORDINATOR_URL}/submit-block`, { method: "POST", headers: { "Content-Type": "application/json" }, body: submitBody });
         
         if (submitRes.ok) {
           await env.BOT_STATE.put("last_mining_log", `Success! [${engineType}] Block ${targetHeight} mined.`);
@@ -193,7 +212,6 @@ async function pollTelegramUpdates(env) {
     if (data.ok && data.result.length > 0) {
       let maxId = offset;
       for (const update of data.result) {
-        const cfRequest = { url: `http://localhost/telegram-webhook`, method: 'POST', json: async () => update };
         await handleTelegramUpdate(update, env);
         maxId = Math.max(maxId, update.update_id + 1);
       }
