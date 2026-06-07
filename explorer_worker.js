@@ -55,19 +55,26 @@ async function handleRequest(request) {
     <script>
         async function updateStats() {
             try {
-                const res = await fetch('https://seer-coordinator.toon-satoshi.workers.dev/network-state');
+                // Fetch with cache busting
+                const res = await fetch('https://seer-coordinator.toon-satoshi.workers.dev/network-state?t=' + Date.now());
                 const data = await res.json();
                 
-                document.getElementById('latest-block').textContent = data.latest_block;
-                document.getElementById('active-nodes').textContent = data.active_nodes;
+                if (data.latest_block) {
+                  document.getElementById('latest-block').textContent = data.latest_block;
+                }
                 
-                const total = data.total_supply;
+                document.getElementById('active-nodes').textContent = data.active_nodes || '0';
+                
+                const total = Number(data.total_supply) || 100000000;
                 const mined = total - 100000000;
                 
                 document.getElementById('total-supply').textContent = (total / 1000000).toFixed(4) + 'M';
                 document.getElementById('mined-supply').textContent = mined.toLocaleString();
             } catch (e) {
-                document.getElementById('latest-block').textContent = 'SYNC ERROR';
+                console.error('Update failed:', e);
+                if (document.getElementById('latest-block').textContent === 'SCANNING...') {
+                  document.getElementById('latest-block').textContent = 'SYNC ERROR';
+                }
             }
         }
         updateStats();
