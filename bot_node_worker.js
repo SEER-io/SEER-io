@@ -21,22 +21,14 @@ export default {
         let engines = [];
         let total_miner_blocks = 0;
 
-        // BATCH REQUESTS TO REDUCE SUBREQUESTS
         try {
           const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(COORDINATOR_URL + "/network-state");
           globalState = await res.json();
-          
           const minerStatsRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/miner-stats?id=" + identity.adnl_id)) : await fetch(COORDINATOR_URL + "/miner-stats?id=" + identity.adnl_id);
           total_miner_blocks = (await minerStatsRes.json()).blocks || 0;
-          
-          engines = globalState.cloud_engines > 0 ? ['Cloud'] : [];
+          engines = (globalState.cloud_engines > 0) ? ['Cloud'] : [];
           if (globalState.local_engines > 0) engines.push('Local');
-        } catch (e) {
-            console.error("Global fetch failed", e);
-        }
-
-        // REMOVED: list() to save quota
-        // const mempoolList = await env.BOT_STATE.list({ prefix: "mempool:", limit: 1 });
+        } catch (e) {}
 
         return new Response(JSON.stringify({ 
           blocks_mined: total_miner_blocks, 
@@ -50,7 +42,7 @@ export default {
           global_staking: globalState.staking_ratio,
           global_mcap: globalState.market_cap,
           height: globalState.latest_block,
-          mempool_size: 0 // Default to 0 for now to save quota
+          mempool_size: 0
         }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Access-Control-Allow-Origin": "*" } });
@@ -147,7 +139,8 @@ async function handleTelegramUpdate(update, env) {
   const text = update.message.text;
 
   if (text === "/start") {
-    await sendTgMessage(chatId, "👁️ SEER Node Bot v1.0.0\n\nWelcome operator!\n\n/send <address> <amount>\n/status - Wallet details\n/mempool - View synced txs");
+    const url = "https://seer-node-001.toon-satoshi.workers.dev";
+    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n📡 **MEMPOOL SYNC**:\nPlease join the @seer_miner_channel to sync transactions. \n⚠️ **IMPORTANT**: Turn OFF notifications for that channel to avoid noise.\n\n🔗 Dashboard Link: ${url}`);
   } else if (text.startsWith("/send")) {
     const parts = text.split(" ");
     if (parts.length < 3) return sendTgMessage(chatId, "Usage: /send <address> <amount>");
@@ -338,14 +331,17 @@ function generateDashboardHTML() {
         </div>
 
         <div style="margin-top: 25px; border-top: 1px solid #222; padding-top: 15px;">
-            <div style="font-weight:bold; font-size:0.8rem; margin-bottom:10px; color: var(--neon-purple);">🌉 TON TESTNET BRIDGE</div>
+            <div style="font-weight:bold; font-size:0.8rem; margin-bottom:10px; color: var(--neon-purple);">Bridge: TON Testnet</div>
             <input type="text" id="ton-address-input" placeholder="TON Testnet Wallet Address" style="width:100%; background:#000; border:1px solid #222; color:#fff; padding:8px; border-radius:5px; font-size:0.7rem;">
             <button class="btn" style="background: var(--neon-purple); margin-top:10px;" onclick="redeemTokens()">REDEEM SEER JETTONS</button>
         </div>
     </div>
 
     <script>
-        const SYMBOLS = ["▲", "■", "◆", "◉", "·"];
+        const SYMBOLS = ["▲", "■", "◆", "◉", "·", "⬢", "⬡", "✦", "✧"];
+        let lastBlockCount = -1;
+        let eventActive = false;
+
         async function fetchStats() {
             try {
                 const res = await fetch('/status');
@@ -354,6 +350,9 @@ function generateDashboardHTML() {
                     document.getElementById('last-log').textContent = "Server Error: " + data.error;
                     return;
                 }
+                if (lastBlockCount !== -1 && data.blocks_mined > lastBlockCount) triggerBlockBurst();
+                lastBlockCount = data.blocks_mined;
+
                 document.getElementById('earned-seer').textContent = data.earned_seer || 0;
                 document.getElementById('height').textContent = data.height;
                 document.getElementById('mempool').textContent = data.mempool_size;
@@ -363,22 +362,23 @@ function generateDashboardHTML() {
                 
                 const fleet = document.getElementById('engine-fleet');
                 fleet.innerHTML = '';
-                ['Cloud', 'Local'].forEach(type => {
+                (data.active_engines || []).forEach(type => {
                     const span = document.createElement('span');
-                    span.className = 'engine-tag' + (data.active_engines.includes(type) ? ' engine-active' : '');
+                    span.className = 'engine-tag engine-active';
                     span.textContent = type + ' ENGINE';
                     fleet.appendChild(span);
                 });
-            } catch(e) {
-                document.getElementById('last-log').textContent = "Sync Error: Check Connection";
-            }
+            } catch(e) {}
+        }
+        function triggerBlockBurst() {
+            eventActive = true;
+            setTimeout(() => { eventActive = false; }, 4000);
         }
         async function saveSettings() {
             const enabled = document.getElementById('mining-toggle').checked;
             await fetch('/update-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mining_enabled: enabled }) });
             fetchStats();
         }
-
         async function redeemTokens() {
             const tonAddress = document.getElementById('ton-address-input').value;
             const amount = prompt("How many SEER tokens would you like to redeem?");
@@ -388,23 +388,30 @@ function generateDashboardHTML() {
             if (result.success) { alert('SUCCESS! Burn ID: ' + result.burn_id); fetchStats(); }
             else { alert("ERROR: " + result.error); }
         }
-
         function updateConsole() {
             if (!document.getElementById('mining-toggle').checked) return;
             const consoleBox = document.getElementById('mining-console');
             const fill = document.getElementById('p-fill');
-            const char = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
+            let char = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
+            let color = '#' + Math.floor(Math.random()*16777215).toString(16);
+            if (eventActive) { char = "✦"; color = "#00f2ff"; }
             const entry = document.createElement('span');
-            entry.style.color = '#' + Math.floor(Math.random()*16777215).toString(16);
-            entry.textContent = char;
+            if (Math.random() < 0.05) {
+                const hex = Array.from(crypto.getRandomValues(new Uint8Array(2))).map(b => b.toString(16).padStart(2, '0')).join('');
+                entry.textContent = ' [0x' + hex + '] ';
+                entry.style.color = '#fff';
+            } else {
+                entry.style.color = color;
+                entry.textContent = char;
+            }
             consoleBox.appendChild(entry);
-            if (consoleBox.childNodes.length > 250) consoleBox.removeChild(consoleBox.firstChild);
+            if (consoleBox.childNodes.length > 200) consoleBox.removeChild(consoleBox.firstChild);
             let p = parseFloat(fill.style.width || "0");
             fill.style.width = ((p + 2) % 101) + "%";
         }
         fetchStats();
         setInterval(fetchStats, 5000);
-        setInterval(updateConsole, 50);
+        setInterval(updateConsole, 60);
     </script>
 </body>
 </html>`;
