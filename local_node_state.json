@@ -1,6 +1,0 @@
-{
-  "identity": "{\"adnl_id\":\"5c80a3f37ec76a09f8f8abb9\",\"publicKeyHex\":\"fd38f486725a2dbcc5afc11bac5895fe75d4ace880b55c82523df5f8f1f459cc\",\"privateKeyBase64\":\"MC4CAQAwBQYDK2VwBCIEIKOiaZHI25k2zATUZW878rxy9B0mM7zUV5bFczox0CNx\"}",
-  "node_state": "{\"height\":42,\"blocks_mined\":6,\"earned_seer\":300}",
-  "last_mining_log": "Success! Block 42 mined. +50 SEER earned.",
-  "last_request": "GET /status at 2026-06-07T02:47:40.280Z"
-}

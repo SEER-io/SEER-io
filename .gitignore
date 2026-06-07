@@ -8,3 +8,7 @@ dist/
 build/
 wrangler-temp/
 .wrangler/
+.tmp_worker.js
+local_node_config.json
+local_node_state.json
+node_output.log
