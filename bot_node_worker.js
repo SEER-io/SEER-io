@@ -59,6 +59,38 @@ export default {
       return new Response(JSON.stringify({ result }), { headers: { "Content-Type": "application/json" } });
     }
 
+    if (request.method === "POST" && url.pathname === "/redeem") {
+      try {
+        const { amount, ton_address } = await request.json();
+        const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { earned_seer: 0 };
+        
+        if (!state.earned_seer || state.earned_seer < amount) {
+          return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400, headers: corsHeaders });
+        }
+
+        state.earned_seer -= amount;
+        await env.BOT_STATE.put("node_state", JSON.stringify(state));
+
+        const burn_id = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
+        const request_data = {
+          burn_id,
+          amount,
+          ton_address,
+          node_id: (await getOrCreateIdentity(env)).adnl_id,
+          timestamp: Date.now(),
+          status: "pending"
+        };
+        
+        await env.BOT_STATE.put(`redeem:${burn_id}`, JSON.stringify(request_data));
+
+        return new Response(JSON.stringify({ success: true, burn_id, message: "Tokens burned. Relayer notified." }), { 
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+      }
+    }
+
     return new Response("SEER Bot Node Live");
   },
 
@@ -83,6 +115,7 @@ async function getOrCreateIdentity(env) {
 
   const publicKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
   const privateKey = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+
   const publicKeyHex = bytesToHex(new Uint8Array(publicKey));
   const adnlHash = await crypto.subtle.digest("SHA-256", publicKey);
   const adnl_id = bytesToHex(new Uint8Array(adnlHash)).slice(0, 24);
@@ -309,6 +342,12 @@ function generateDashboardHTML() {
             <input type="text" id="node-name-input" placeholder="Node Name" style="width:100%; background:#000; border:1px solid #222; color:#fff; padding:8px; margin-top:10px; border-radius:5px; font-size:0.8rem;">
             <button class="btn" onclick="saveSettings()">UPDATE NODE</button>
         </div>
+
+        <div style="margin-top: 25px; border-top: 1px solid #222; padding-top: 15px;">
+            <div style="font-weight:bold; font-size:0.8rem; margin-bottom:10px; color: var(--neon-purple);">🌉 TON TESTNET BRIDGE</div>
+            <input type="text" id="ton-address-input" placeholder="TON Testnet Wallet Address" style="width:100%; background:#000; border:1px solid #222; color:#fff; padding:8px; border-radius:5px; font-size:0.7rem;">
+            <button class="btn" style="background: var(--neon-purple); margin-top:10px;" onclick="redeemTokens()">REDEEM SEER JETTONS</button>
+        </div>
     </div>
 
     <script>
@@ -326,7 +365,6 @@ function generateDashboardHTML() {
             document.getElementById('last-log').textContent = data.last_log;
             document.getElementById('node-name-input').value = data.node_name;
             
-            // Value Calculation (Strictly 0 for now)
             document.getElementById('earned-usd').textContent = '$0.00';
             
             if(data.mining_enabled) document.getElementById('mining-dot').classList.add('mining-active');
@@ -342,6 +380,31 @@ function generateDashboardHTML() {
                 body: JSON.stringify({ node_name: name, mining_enabled: enabled })
             });
             fetchStats();
+        }
+
+        async function redeemTokens() {
+            const tonAddress = document.getElementById('ton-address-input').value;
+            const amount = prompt("How many SEER tokens would you like to redeem?");
+            if (!amount || isNaN(amount)) return;
+
+            if (!tonAddress.startsWith('E') && !tonAddress.startsWith('U')) {
+                alert("Please enter a valid TON Testnet address.");
+                return;
+            }
+
+            const res = await fetch('/redeem', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ amount: parseInt(amount), ton_address: tonAddress })
+            });
+
+            const result = await res.json();
+            if (result.success) {
+                alert('SUCCESS! ' + amount + ' SEER burned.\\nBurn ID: ' + result.burn_id + '\\n\\nThe relayer will mint your Jettons on TON Testnet shortly.');
+                fetchStats();
+            } else {
+                alert("ERROR: " + result.error);
+            }
         }
 
         function updateConsole() {
