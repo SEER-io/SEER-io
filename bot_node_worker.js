@@ -35,7 +35,8 @@ export default {
             console.error("Global fetch failed", e);
         }
 
-        const mempoolList = await env.BOT_STATE.list({ prefix: "mempool:", limit: 1 });
+        // REMOVED: list() to save quota
+        // const mempoolList = await env.BOT_STATE.list({ prefix: "mempool:", limit: 1 });
 
         return new Response(JSON.stringify({ 
           blocks_mined: total_miner_blocks, 
@@ -49,7 +50,7 @@ export default {
           global_staking: globalState.staking_ratio,
           global_mcap: globalState.market_cap,
           height: globalState.latest_block,
-          mempool_size: mempoolList.keys.length
+          mempool_size: 0 // Default to 0 for now to save quota
         }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Access-Control-Allow-Origin": "*" } });
