@@ -43,3 +43,10 @@ Check the current network state at our [Global Explorer](https://seer-explorer.p
 
 ---
 *SEER: The Network in Your Pocket.*
+
+## Recent Achievements (June 2026)
+- ✅ **Network Live:** The SEER Coordinator is officially operational on Cloudflare Workers.
+- ✅ **First Miner Deployed:** The first automated Telegram Bot Node is now mining blocks on the network.
+- ✅ **Global Explorer Sync:** [SEER Explorer](https://seer-explorer.toon-satoshi.workers.dev/) is live and visualizing real-time network state.
+- ✅ **Node Mini App:** Operators can now manage their nodes via a sleek [Telegram Mini App](https://t.me/seer_000000000000_bot) dashboard.
+- ✅ **CI/CD Optimized:** Fully automated deployment pipeline via GitHub Actions with high-speed test suites (0.01s).
