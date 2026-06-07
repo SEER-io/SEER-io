@@ -24,13 +24,33 @@ export default {
           sentiment: 0.5,
           gini: 0.35,
           staking_ratio: 0.15,
-          market_cap: 0, // HONEST VALUATION: No liquidity yet
+          market_cap: 0,
           ton_bridge_active: false
         };
-        state.api_version = "ORACLE-v1.2";
         return new Response(JSON.stringify(state), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
+      }
+
+      // Heartbeat to track active engines per miner
+      if (url.pathname === "/heartbeat" && request.method === "POST") {
+        const data = await request.json();
+        const { miner_id, engine_type } = data; // engine_type: 'Cloud' or 'Local'
+        await env.NETWORK_STATE.put(`engine:${miner_id}:${engine_type}`, Date.now().toString(), { expirationTtl: 300 }); // Expire in 5 mins
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
+      }
+
+      if (url.pathname === "/engines" && request.method === "GET") {
+        const miner_id = url.searchParams.get("miner_id");
+        const list = await env.NETWORK_STATE.list({ prefix: `engine:${miner_id}:` });
+        const engines = list.keys.map(k => k.name.split(':').pop());
+        return new Response(JSON.stringify({ engines }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (url.pathname === "/miner-stats" && request.method === "GET") {
+        const miner_id = url.searchParams.get("id");
+        const blocks = await env.NETWORK_STATE.get(`miner:${miner_id}:blocks`) || "0";
+        return new Response(JSON.stringify({ blocks: parseInt(blocks) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       if (url.pathname === "/submit-block" && request.method === "POST") {
@@ -62,7 +82,7 @@ export default {
           return new Response(JSON.stringify({ error: "Insufficient difficulty" }), { status: 400, headers: corsHeaders });
         }
         
-        // 3. Oracle Tokenomics (Market Cap strictly 0 until TON Bridge / Liquidity exists)
+        // 3. Oracle Tokenomics
         const prevState = await env.NETWORK_STATE.get("latest", { type: "json" }) || {};
         const prevSupply = Number(prevState.total_supply) || 100000000;
         const prevSentiment = Number(prevState.sentiment) || 0.5;
@@ -88,13 +108,17 @@ export default {
           sentiment: Number(sentiment.toFixed(6)),
           gini: Number(gini.toFixed(6)),
           staking_ratio: Number(stakingRatio.toFixed(6)),
-          market_cap: 0, // HONEST VALUATION: Worthless without liquidity pool
+          market_cap: 0,
           ton_bridge_active: false,
           api_version: "ORACLE-v1.2"
         };
         
         await env.NETWORK_STATE.put("latest", JSON.stringify(newState));
         
+        // Also track the miner's total blocks in KV
+        let minerBlocks = await env.NETWORK_STATE.get(`miner:${block.miner}:blocks`) || 0;
+        await env.NETWORK_STATE.put(`miner:${block.miner}:blocks`, (parseInt(minerBlocks) + 1).toString());
+
         return new Response(JSON.stringify({ status: "Accepted", hash: computedHashHex }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
