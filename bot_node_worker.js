@@ -68,6 +68,10 @@ function generateDashboardHTML() {
         .btn:hover { opacity: 0.8; }
         .status-dot { height: 10px; width: 10px; background-color: #00f2ff; border-radius: 50%; display: inline-block; margin-right: 8px; box-shadow: 0 0 10px var(--neon-blue); }
         .mining-active { animation: pulse 2s infinite; }
+        .console { background: #000; border: 1px solid #222; border-radius: 8px; padding: 15px; margin-top: 20px; font-family: 'Courier New', monospace; height: 120px; overflow-y: hidden; font-size: 0.7rem; color: #00ff00; opacity: 0.8; }
+        .log-entry { margin-bottom: 4px; white-space: nowrap; }
+        .progress-container { width: 100%; background: #222; border-radius: 10px; height: 4px; margin-top: 10px; overflow: hidden; }
+        .progress-bar { width: 0%; height: 100%; background: var(--neon-blue); box-shadow: 0 0 10px var(--neon-blue); transition: width 0.1s; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 242, 255, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 242, 255, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 242, 255, 0); } }
     </style>
 </head>
@@ -90,6 +94,14 @@ function generateDashboardHTML() {
         <div class="stat-row">
             <span class="stat-label">Status</span>
             <span class="stat-value"><span id="mining-dot" class="status-dot"></span><span id="status-text">SYNCING</span></span>
+        </div>
+
+        <div class="console" id="mining-console">
+            <div class="log-entry">> Initialising SEER Core...</div>
+            <div class="log-entry">> Awaiting network sync...</div>
+        </div>
+        <div class="progress-container">
+            <div class="progress-bar" id="mining-progress"></div>
         </div>
 
         <div class="settings">
@@ -141,8 +153,37 @@ function generateDashboardHTML() {
             fetchStats();
         }
 
+        let consoleTimer;
+        function updateConsole() {
+            const consoleBox = document.getElementById('mining-console');
+            const toggle = document.getElementById('mining-toggle');
+            const progressBar = document.getElementById('mining-progress');
+            
+            if (toggle.checked) {
+                // Generate a fake hash for visual effect
+                const hash = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
+                const entry = document.createElement('div');
+                entry.className = 'log-entry';
+                entry.textContent = `> HASH: ${hash.slice(0, 24)}... (nonce: ${Math.floor(Math.random() * 10000)})`;
+                consoleBox.appendChild(entry);
+                
+                // Keep the last 6 entries
+                while (consoleBox.childNodes.length > 6) {
+                    consoleBox.removeChild(consoleBox.firstChild);
+                }
+                
+                // Animate progress bar
+                let progress = parseFloat(progressBar.style.width || "0");
+                progress = (progress + (Math.random() * 10)) % 101;
+                progressBar.style.width = progress + "%";
+            } else {
+                progressBar.style.width = "0%";
+            }
+        }
+
         fetchStats();
         setInterval(fetchStats, 10000);
+        setInterval(updateConsole, 250);
     </script>
 </body>
 </html>`;
