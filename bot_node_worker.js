@@ -15,8 +15,9 @@ export default {
     if (url.pathname === "/status") {
       const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
       const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
+      const lastLog = await env.BOT_STATE.get("last_mining_log") || "No logs yet.";
       const nodeID = await getNodeID(env);
-      return new Response(JSON.stringify({ ...state, ...settings, node_id: nodeID }), { 
+      return new Response(JSON.stringify({ ...state, ...settings, node_id: nodeID, last_log: lastLog }), { 
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
       });
     }
@@ -100,6 +101,9 @@ function generateDashboardHTML() {
             <div class="log-entry">> Initialising SEER Core...</div>
             <div class="log-entry">> Awaiting network sync...</div>
         </div>
+        <div id="last-log-display" style="font-size: 0.6rem; opacity: 0.5; margin-top: 5px; width: 100%; text-align: left;">
+            Last: LOADING...
+        </div>
         <div class="progress-container">
             <div class="progress-bar" id="mining-progress"></div>
         </div>
@@ -128,6 +132,7 @@ function generateDashboardHTML() {
             document.getElementById('height').textContent = data.height;
             document.getElementById('blocks-mined').textContent = data.blocks_mined;
             document.getElementById('mining-toggle').checked = data.mining_enabled;
+            document.getElementById('last-log-display').textContent = "Last: " + data.last_log;
             
             const statusText = data.mining_enabled ? "MINING" : "IDLE";
             document.getElementById('status-text').textContent = statusText;
@@ -164,7 +169,7 @@ function generateDashboardHTML() {
                 const hash = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
                 const entry = document.createElement('div');
                 entry.className = 'log-entry';
-                entry.textContent = `> HASH: ${hash.slice(0, 24)}... (nonce: ${Math.floor(Math.random() * 10000)})`;
+                entry.textContent = '> HASH: ' + hash.slice(0, 24) + '... (nonce: ' + Math.floor(Math.random() * 10000) + ')';
                 consoleBox.appendChild(entry);
                 
                 // Keep the last 6 entries
@@ -197,7 +202,14 @@ async function handleTelegramUpdate(update, env) {
 
   if (text === "/start") {
     const url = "https://seer-node-001.toon-satoshi.workers.dev";
-    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining in the background.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n🔗 Dashboard Link: ${url}`);
+    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining in the background.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n🔗 Dashboard Link: ${url}\n\nAvailable commands:\n/status - View node performance\n/mine - Trigger manual mining\n/mining_on - Enable background mining\n/mining_off - Disable background mining`);
+  } else if (text === "/mining_on") {
+    await env.BOT_STATE.put("settings", JSON.stringify({ mining_enabled: true, node_name: (await env.BOT_STATE.get("settings", {type: "json"}) || {}).node_name || "SEER Node 001" }));
+    await sendTgMessage(chatId, "✅ Background mining ENABLED.");
+  } else if (text === "/mining_off") {
+    const settings = await env.BOT_STATE.get("settings", {type: "json"}) || { node_name: "SEER Node 001" };
+    await env.BOT_STATE.put("settings", JSON.stringify({ ...settings, mining_enabled: false }));
+    await sendTgMessage(chatId, "🛑 Background mining DISABLED.");
   } else if (text === "/status") {
     const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
     const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
@@ -233,6 +245,7 @@ async function getNodeID(env) {
 }
 
 async function performMining(env) {
+  const start = Date.now();
   try {
     const res = await fetch(`${COORDINATOR_URL}/network-state`);
     const netState = await res.json();
@@ -240,16 +253,21 @@ async function performMining(env) {
     const currentHeight = netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block);
     const targetHeight = currentHeight + 1;
     const prevHash = netState.latest_hash;
-    
-    const timestamp = Math.floor(Date.now() / 1000);
     const nodeID = await getNodeID(env);
     
-    for (let i = 0; i < 50000; i++) {
-      const nonce = Math.floor(Math.random() * 1000000000);
-      const data = new TextEncoder().encode(`${targetHeight}${prevHash}${timestamp}${nonce}${nodeID}`);
+    // Attempt 100,000 nonces (increased limit)
+    // We use a local loop to minimize TextEncoder overhead
+    const encoder = new TextEncoder();
+    const baseData = `${targetHeight}${prevHash}${nodeID}`;
+    
+    for (let i = 0; i < 100000; i++) {
+      const nonce = Math.floor(Math.random() * 2000000000);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const data = encoder.encode(baseData + timestamp + nonce);
       const hashBuffer = await crypto.subtle.digest("SHA-256", data);
       const hashArray = new Uint8Array(hashBuffer);
       
+      // 16-bit difficulty (2 bytes zero)
       if (hashArray[0] === 0 && hashArray[1] === 0) {
         const hashHex = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
         
@@ -269,12 +287,14 @@ async function performMining(env) {
           localState.height = targetHeight;
           localState.blocks_mined++;
           await env.BOT_STATE.put("node_state", JSON.stringify(localState));
+          await env.BOT_STATE.put("last_mining_log", `Success! Block ${targetHeight} mined in ${Date.now() - start}ms`);
           return { height: targetHeight, hash: hashHex };
         }
       }
     }
+    await env.BOT_STATE.put("last_mining_log", `Cycle finished. 100k hashes tried in ${Date.now() - start}ms. No block found.`);
   } catch (e) {
-    console.error("Mining failed", e);
+    await env.BOT_STATE.put("last_mining_log", `Error: ${e.message}`);
   }
   return null;
 }
