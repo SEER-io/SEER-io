@@ -89,7 +89,21 @@ export default {
 
   async scheduled(event, env, ctx) {
     const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true };
+    const identity = await getOrCreateIdentity(env);
+    const engineType = typeof process !== 'undefined' ? 'Local' : 'Cloud';
+
+    // 1. Heartbeat (Track engine presence)
+    const hbBody = JSON.stringify({ miner_id: identity.adnl_id, engine_type: engineType });
+    if (env.COORDINATOR) {
+        ctx.waitUntil(env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", { method: 'POST', body: hbBody })));
+    } else {
+        ctx.waitUntil(fetch(`${COORDINATOR_URL}/heartbeat`, { method: 'POST', headers: { "Content-Type": "application/json" }, body: hbBody }));
+    }
+    
+    // 2. Process pending Telegram updates
     ctx.waitUntil(pollTelegramUpdates(env));
+
+    // 3. Perform Mining
     if (settings.mining_enabled) {
       ctx.waitUntil(performMining(env));
     }
@@ -127,14 +141,6 @@ async function performMining(env) {
   try {
     const identity = await getOrCreateIdentity(env);
     
-    // Heartbeat
-    const hbBody = JSON.stringify({ miner_id: identity.adnl_id, engine_type: engineType });
-    if (env.COORDINATOR) {
-        await env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", { method: 'POST', body: hbBody }));
-    } else {
-        await fetch(`${COORDINATOR_URL}/heartbeat`, { method: 'POST', headers: { "Content-Type": "application/json" }, body: hbBody });
-    }
-
     let res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
     const netState = await res.json();
     const currentHeight = netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block);
