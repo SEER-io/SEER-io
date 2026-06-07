@@ -5,7 +5,7 @@ const MASTER_CHANNEL_ID = "-1003997728534";
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    await env.BOT_STATE.put("last_request", `${request.method} ${url.pathname} at ${new Date().toISOString()}`);
+    await env.BOT_STATE.put("last_request", request.method + " " + url.pathname + " at " + new Date().toISOString());
 
     if (request.method === "POST" && url.pathname === "/telegram-webhook") {
       const update = await request.json();
@@ -15,6 +15,7 @@ export default {
     if (url.pathname === "/status") {
       const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
       const lastLog = await env.BOT_STATE.get("last_mining_log") || "No logs yet.";
+      const lastReq = await env.BOT_STATE.get("last_request") || "None";
       const identity = await getOrCreateIdentity(env);
       
       let globalState = { velocity: 0.002, staking_ratio: 0.15, total_supply: 100000000, market_cap: 0 };
@@ -22,11 +23,11 @@ export default {
       let total_miner_blocks = 0;
 
       try {
-        const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
+        const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(COORDINATOR_URL + "/network-state");
         globalState = await res.json();
-        const engineRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request(`https://coordinator/engines?miner_id=${identity.adnl_id}`)) : await fetch(`${COORDINATOR_URL}/engines?miner_id=${identity.adnl_id}`);
+        const engineRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/engines?miner_id=" + identity.adnl_id)) : await fetch(COORDINATOR_URL + "/engines?miner_id=" + identity.adnl_id);
         engines = (await engineRes.json()).engines;
-        const minerStatsRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request(`https://coordinator/miner-stats?id=${identity.adnl_id}`)) : await fetch(`${COORDINATOR_URL}/miner-stats?id=${identity.adnl_id}`);
+        const minerStatsRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/miner-stats?id=" + identity.adnl_id)) : await fetch(COORDINATOR_URL + "/miner-stats?id=" + identity.adnl_id);
         total_miner_blocks = (await minerStatsRes.json()).blocks;
       } catch (e) {}
 
@@ -44,7 +45,8 @@ export default {
         global_staking: globalState.staking_ratio,
         global_mcap: globalState.market_cap,
         height: globalState.latest_block,
-        mempool_size: mempoolList.keys.length
+        mempool_size: mempoolList.keys.length,
+        last_request: lastReq
       }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
     }
 
@@ -72,7 +74,7 @@ export default {
         state.earned_seer -= amount;
         await env.BOT_STATE.put("node_state", JSON.stringify(state));
         const burn_id = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
-        await env.BOT_STATE.put(`redeem:${burn_id}`, JSON.stringify({ burn_id, amount, ton_address, timestamp: Date.now(), status: "pending" }));
+        await env.BOT_STATE.put("redeem:" + burn_id, JSON.stringify({ burn_id, amount, ton_address, timestamp: Date.now(), status: "pending" }));
         return new Response(JSON.stringify({ success: true, burn_id }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
       } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500 }); }
     }
@@ -84,9 +86,13 @@ export default {
     const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true };
     const identity = await getOrCreateIdentity(env);
     const engineType = typeof process !== 'undefined' ? 'Local' : 'Cloud';
-    const hbBody = JSON.stringify({ miner_id: identity.adnl_id, engine_type: engineType });
-    if (env.COORDINATOR) ctx.waitUntil(env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", { method: 'POST', body: hbBody })));
-    else ctx.waitUntil(fetch(`${COORDINATOR_URL}/heartbeat`, { method: 'POST', headers: { "Content-Type": "application/json" }, body: hbBody }));
+    
+    if (engineType === 'Local' || Math.random() < 0.1) {
+      const hbBody = JSON.stringify({ miner_id: identity.adnl_id, engine_type: engineType });
+      if (env.COORDINATOR) ctx.waitUntil(env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", { method: 'POST', body: hbBody })));
+      else ctx.waitUntil(fetch(COORDINATOR_URL + "/heartbeat", { method: 'POST', headers: { "Content-Type": "application/json" }, body: hbBody }));
+    }
+    
     ctx.waitUntil(pollTelegramUpdates(env));
     if (settings.mining_enabled) ctx.waitUntil(performMining(env));
   }
@@ -98,7 +104,7 @@ async function signTransaction(env, recipient, amount, fee) {
   const nonce = (state.nonce || 0) + 1;
   const binaryDer = Uint8Array.from(atob(identity.privateKeyBase64), c => c.charCodeAt(0));
   const privateKey = await crypto.subtle.importKey("pkcs8", binaryDer, { name: "Ed25519", namedCurve: "Ed25519" }, true, ["sign"]);
-  const txData = `${identity.publicKeyHex}${recipient}${amount}${fee}${nonce}`;
+  const txData = identity.publicKeyHex + recipient + amount + fee + nonce;
   const sig = await crypto.subtle.sign({ name: "Ed25519" }, privateKey, new TextEncoder().encode(txData));
   const tx = { sender: identity.publicKeyHex, recipient, amount, fee, nonce, signature: bytesToHex(new Uint8Array(sig)) };
   state.nonce = nonce;
@@ -109,7 +115,7 @@ async function signTransaction(env, recipient, amount, fee) {
 async function verifyTransaction(tx) {
   try {
     const publicKey = await crypto.subtle.importKey("raw", hexToBytes(tx.sender), { name: "Ed25519", namedCurve: "Ed25519" }, true, ["verify"]);
-    const txData = `${tx.sender}${tx.recipient}${tx.amount}${tx.fee}${tx.nonce}`;
+    const txData = tx.sender + tx.recipient + tx.amount + tx.fee + tx.nonce;
     return await crypto.subtle.verify({ name: "Ed25519" }, publicKey, hexToBytes(tx.signature), new TextEncoder().encode(txData));
   } catch (e) { return false; }
 }
@@ -122,7 +128,7 @@ async function handleTelegramUpdate(update, env) {
         const tx = JSON.parse(text.replace("SEER_TX:", "").trim());
         if (await verifyTransaction(tx)) {
            const txHash = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(tx)))));
-           await env.BOT_STATE.put(`mempool:${txHash}`, JSON.stringify(tx));
+           await env.BOT_STATE.put("mempool:" + txHash, JSON.stringify(tx));
         }
       } catch (e) {}
     }
@@ -134,23 +140,23 @@ async function handleTelegramUpdate(update, env) {
   const text = update.message.text;
 
   if (text === "/start") {
-    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining.\n\n🔗 Dashboard: https://seer-node-001.toon-satoshi.workers.dev\n\nCommands:\n/status - Fleet status\n/send <address> <amount> - Broadcast TX\n/mempool - View local mempool\n/apply - Request join Master Channel`);
+    await sendTgMessage(chatId, "👁️ SEER Node Bot v1.0.0\n\nWelcome operator!\n\n/send <address> <amount>\n/status - Wallet details\n/mempool - View synced txs");
   } else if (text.startsWith("/send")) {
     const parts = text.split(" ");
     if (parts.length < 3) return sendTgMessage(chatId, "Usage: /send <address> <amount>");
     const tx = await signTransaction(env, parts[1], parseInt(parts[2]), 1);
-    await announceToMasterChannel(`SEER_TX: ${JSON.stringify(tx)}`);
+    await announceToMasterChannel("SEER_TX: " + JSON.stringify(tx));
     await sendTgMessage(chatId, "✅ Transaction signed and broadcast to SEER Mempool.");
   } else if (text === "/mempool") {
     const list = await env.BOT_STATE.list({ prefix: "mempool:" });
-    await sendTgMessage(chatId, `📦 LOCAL MEMPOOL\nPending TXs: \${list.keys.length}\n\nMiners pick these up automatically from the Master Channel.`);
+    await sendTgMessage(chatId, "📦 LOCAL MEMPOOL\nPending TXs: " + list.keys.length + "\n\nSynced via the Master Channel.");
   } else if (text === "/apply") {
     const identity = await getOrCreateIdentity(env);
-    await announceToMasterChannel(`🙋 <b>PROMOTION REQUEST</b>\nNode: <code>\${identity.adnl_id}</code>\nOperator: @\${update.message.from.username || "unknown"}`);
-    await sendTgMessage(chatId, "✅ Request sent to the Master Channel.");
+    await announceToMasterChannel("🙋 <b>PROMOTION REQUEST</b>\nNode: <code>" + identity.adnl_id + "</code>");
+    await sendTgMessage(chatId, "✅ Request sent.");
   } else if (text === "/status") {
     const identity = await getOrCreateIdentity(env);
-    await sendTgMessage(chatId, `📊 NODE STATUS\nIdentity: \${identity.adnl_id}\nUse the Dashboard for full fleet stats.`);
+    await sendTgMessage(chatId, "📊 NODE STATUS\nIdentity: " + identity.adnl_id);
   } else if (text === "/mine") {
     await performMining(env);
     await sendTgMessage(chatId, "⛏️ Manual mine attempt finished.");
@@ -159,12 +165,12 @@ async function handleTelegramUpdate(update, env) {
 }
 
 async function sendTgMessage(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text: text }) });
+  await fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text: text }) });
 }
 
 async function announceToMasterChannel(text) {
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: MASTER_CHANNEL_ID, text: text, parse_mode: "HTML" }) });
+    await fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: MASTER_CHANNEL_ID, text: text, parse_mode: "HTML" }) });
   } catch (e) {}
 }
 
@@ -179,26 +185,22 @@ async function getOrCreateIdentity(env) {
   const adnl_id = bytesToHex(new Uint8Array(adnlHash)).slice(0, 24);
   const identity = { adnl_id, publicKeyHex, privateKeyBase64: btoa(String.fromCharCode(...new Uint8Array(privateKey))) };
   await env.BOT_STATE.put("identity", JSON.stringify(identity));
-  await announceToMasterChannel(`🛰 <b>NEW MINER ONLINE</b>\nNode ID: <code>\${adnl_id}</code>`);
+  await announceToMasterChannel("🛰 <b>NEW MINER ONLINE</b>\nNode ID: <code>" + adnl_id + "</code>");
   return identity;
 }
 
 async function performMining(env) {
-  const start = Date.now();
   const engineType = typeof process !== 'undefined' ? 'Local' : 'Cloud';
   try {
     const identity = await getOrCreateIdentity(env);
-    const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
+    const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(COORDINATOR_URL + "/network-state");
     const netState = await res.json();
     const targetHeight = (netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block)) + 1;
     const prevHash = hexToBytes(netState.latest_hash || "0000000000000000000000000000000000000000000000000000000000000000");
     
-    // Pick up Transactions from local Mempool
     const mempoolList = await env.BOT_STATE.list({ prefix: "mempool:", limit: 5 });
     const txs = [];
-    for (const key of mempoolList.keys) {
-      txs.push(await env.BOT_STATE.get(key.name, { type: "json" }));
-    }
+    for (const key of mempoolList.keys) txs.push(await env.BOT_STATE.get(key.name, { type: "json" }));
     const txRoot = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(txs)))));
 
     const buffer = new ArrayBuffer(92);
@@ -218,19 +220,18 @@ async function performMining(env) {
       if (hashArray[0] === 0 && hashArray[1] === 0) {
         const hashHex = bytesToHex(hashArray);
         const submitBody = JSON.stringify({ height: targetHeight, prev_hash: bytesToHex(prevHash), tx_root: txRoot, transactions: txs, timestamp: Number(timestamp), difficulty: 16, nonce: Number(nonce), hash: hashHex, miner: identity.adnl_id });
-        let submitRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", { method: "POST", body: submitBody })) : await fetch(`${COORDINATOR_URL}/submit-block`, { method: "POST", headers: { "Content-Type": "application/json" }, body: submitBody });
+        let submitRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", { method: "POST", body: submitBody })) : await fetch(COORDINATOR_URL + "/submit-block", { method: "POST", headers: { "Content-Type": "application/json" }, body: submitBody });
         
         if (submitRes.ok) {
-          await env.BOT_STATE.put("last_mining_log", `Success! [\${engineType}] Block \${targetHeight} mined with \${txs.length} txs.`);
-          await announceToMasterChannel(`⛏ <b>BLOCK MINED</b> [\${engineType}]\nHeight: <b>\${targetHeight}</b>\nTXs: \${txs.length}\nMiner: <code>\${identity.adnl_id}</code>`);
-          // Clear processed TXs
+          await env.BOT_STATE.put("last_mining_log", "Success! Block mined.");
+          await announceToMasterChannel("⛏ <b>BLOCK MINED</b> [" + engineType + "]\nHeight: <b>" + targetHeight + "</b>\nTXs: " + txs.length);
           for (const key of mempoolList.keys) await env.BOT_STATE.delete(key.name);
           return { height: targetHeight, hash: hashHex };
         }
       }
     }
-    await env.BOT_STATE.put("last_mining_log", `Cycle finished [\${engineType}]. No block.`);
-  } catch (e) { await env.BOT_STATE.put("last_mining_log", `Error: \${e.message}`); }
+    await env.BOT_STATE.put("last_mining_log", "Cycle finished [" + engineType + "]. No block.");
+  } catch (e) {}
   return null;
 }
 
@@ -247,7 +248,7 @@ function bytesToHex(bytes) {
 async function pollTelegramUpdates(env) {
   try {
     const offset = await env.BOT_STATE.get("tg_offset") || 0;
-    const res = await fetch(`https://api.telegram.org/bot\${BOT_TOKEN}/getUpdates?offset=\${offset}&timeout=30`);
+    const res = await fetch("https://api.telegram.org/bot" + BOT_TOKEN + "/getUpdates?offset=" + offset + "&timeout=30");
     const data = await res.json();
     if (data.ok && data.result.length > 0) {
       let maxId = offset;
@@ -261,7 +262,7 @@ async function pollTelegramUpdates(env) {
 }
 
 function generateDashboardHTML() {
-  return \`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -364,5 +365,5 @@ function generateDashboardHTML() {
         setInterval(updateConsole, 50);
     </script>
 </body>
-</html>\`;
+</html>`;
 }
