@@ -2,7 +2,7 @@ const BOT_TOKEN = "8951904080:AAFbh5R5F1bZz-am9BF0F2drcqxMuTQI6RM";
 const COORDINATOR_URL = "https://seer-coordinator.toon-satoshi.workers.dev";
 const MASTER_CHANNEL_ID = "-1003997728534"; // Global Miner Channel
 
-export default {
+const worker =  {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     await env.BOT_STATE.put("last_request", `${request.method} ${url.pathname} at ${new Date().toISOString()}`);
@@ -259,19 +259,7 @@ async function handleTelegramUpdate(update, env) {
 
   if (text === "/start") {
     const url = "https://seer-node-001.toon-satoshi.workers.dev";
-    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining in the background.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n🔗 Dashboard Link: ${url}\n\nAvailable commands:\n/status - View node performance\n/mine - Trigger manual mining\n/mining_on - Enable background mining\n/mining_off - Disable background mining\n/apply - Request promotion to Master Channel`);
-  } else if (text === "/apply") {
-    const identity = await getOrCreateIdentity(env);
-    await announceToMasterChannel(`🙋 <b>PROMOTION REQUEST</b>\nNode: <code>${identity.adnl_id}</code>\nOperator: @${update.message.from.username || "unknown"}\nAction: Please promote this bot to admin in this channel to enable global syncing.`);
-    await sendTgMessage(chatId, "✅ Request sent to the Master Channel. The network architect will review your node shortly.");
-  } else if (text === "/mining_on") {
-    const settings = await env.BOT_STATE.get("settings", {type: "json"}) || { node_name: "SEER Node 001" };
-    await env.BOT_STATE.put("settings", JSON.stringify({ ...settings, mining_enabled: true }));
-    await sendTgMessage(chatId, "✅ Background mining ENABLED.");
-  } else if (text === "/mining_off") {
-    const settings = await env.BOT_STATE.get("settings", {type: "json"}) || { node_name: "SEER Node 001" };
-    await env.BOT_STATE.put("settings", JSON.stringify({ ...settings, mining_enabled: false }));
-    await sendTgMessage(chatId, "🛑 Background mining DISABLED.");
+    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining in the background.\n\n🛠️ **DASHBOARD SETUP**:\n1. Click the "Dashboard" button in the menu (bottom left).\n2. Save this as a Mini App for easy access.\n\n🔗 Dashboard Link: ${url}`);
   } else if (text === "/status") {
     const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0, earned_seer: 0 };
     const identity = await getOrCreateIdentity(env);
@@ -472,3 +460,5 @@ function generateDashboardHTML() {
 </body>
 </html>`;
 }
+
+module.exports = worker;
