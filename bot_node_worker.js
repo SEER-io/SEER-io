@@ -283,10 +283,11 @@ function generateDashboardHTML() {
         .stat-v { font-size: 1rem; font-weight: bold; color: var(--neon-blue); }
         .engine-tag { font-size: 0.6rem; padding: 2px 6px; border-radius: 4px; background: #222; margin-right: 5px; color: #fff; }
         .engine-active { background: var(--neon-purple); }
-        .console { background: #000; border-radius: 10px; padding: 12px; font-family: 'Courier New', monospace; height: 80px; overflow: hidden; font-size: 0.7rem; color: #00ff00; border: 1px solid #222; word-break: break-all; }
+        .console { background: #000; border-radius: 10px; padding: 12px; font-family: 'Courier New', monospace; height: 100px; overflow: hidden; font-size: 0.7rem; color: #00ff00; border: 1px solid #222; word-break: break-all; }
         .btn { background: var(--neon-blue); color: #000; border: none; padding: 12px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 15px; }
         .progress-bar { width: 100%; background: #222; height: 3px; border-radius: 10px; margin-top: 8px; overflow: hidden; }
         .progress-fill { height: 100%; background: var(--neon-blue); width: 0%; transition: width 0.2s; }
+        .bridge-pill { background: #330000; color: #ff0000; font-size: 0.6rem; padding: 2px 6px; border-radius: 4px; border: 1px solid #ff0000; margin-left: 5px; }
     </style>
 </head>
 <body>
@@ -311,7 +312,8 @@ function generateDashboardHTML() {
         <div style="font-size: 0.7rem; opacity: 0.6; margin-bottom: 8px;">ORACLE MINING FEED</div>
         <div class="console" id="mining-console"></div>
         <div class="progress-bar"><div class="progress-fill" id="p-fill"></div></div>
-        <div id="last-log" style="font-size: 0.6rem; opacity: 0.4; margin-top: 8px;">Syncing fleet data...</div>
+        
+        <div id="last-log" style="font-size: 0.6rem; opacity: 0.4; margin-top: 8px;">Waiting for cycle...</div>
 
         <div style="margin-top: 25px; border-top: 1px solid #222; padding-top: 15px;">
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">
@@ -319,6 +321,12 @@ function generateDashboardHTML() {
                 <input type="checkbox" id="mining-toggle" onchange="saveSettings()">
             </div>
             <button class="btn" onclick="saveSettings()">SAVE SETTINGS</button>
+        </div>
+
+        <div style="margin-top: 25px; border-top: 1px solid #222; padding-top: 15px;">
+            <div style="font-weight:bold; font-size:0.8rem; margin-bottom:10px; color: var(--neon-purple);">🌉 TON TESTNET BRIDGE</div>
+            <input type="text" id="ton-address-input" placeholder="TON Testnet Wallet Address" style="width:100%; background:#000; border:1px solid #222; color:#fff; padding:8px; border-radius:5px; font-size:0.7rem;">
+            <button class="btn" style="background: var(--neon-purple); margin-top:10px;" onclick="redeemTokens()">REDEEM SEER JETTONS</button>
         </div>
     </div>
 
@@ -350,15 +358,29 @@ function generateDashboardHTML() {
             await fetch('/update-settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mining_enabled: enabled }) });
             fetchStats();
         }
+
+        async function redeemTokens() {
+            const tonAddress = document.getElementById('ton-address-input').value;
+            const amount = prompt("How many SEER tokens would you like to redeem?");
+            if (!amount || isNaN(amount)) return;
+            const res = await fetch('/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: parseInt(amount), ton_address: tonAddress }) });
+            const result = await res.json();
+            if (result.success) { alert('SUCCESS! Burn ID: ' + result.burn_id); fetchStats(); }
+            else { alert("ERROR: " + result.error); }
+        }
+
         function updateConsole() {
             if (!document.getElementById('mining-toggle').checked) return;
             const consoleBox = document.getElementById('mining-console');
+            const fill = document.getElementById('p-fill');
             const char = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
             const entry = document.createElement('span');
             entry.style.color = '#' + Math.floor(Math.random()*16777215).toString(16);
             entry.textContent = char;
             consoleBox.appendChild(entry);
-            if (consoleBox.childNodes.length > 200) consoleBox.removeChild(consoleBox.firstChild);
+            if (consoleBox.childNodes.length > 250) consoleBox.removeChild(consoleBox.firstChild);
+            let p = parseFloat(fill.style.width || "0");
+            fill.style.width = ((p + 2) % 101) + "%";
         }
         fetchStats();
         setInterval(fetchStats, 5000);
