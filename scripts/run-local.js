@@ -26,6 +26,21 @@ const BOT_STATE = {
     const state = fs.existsSync(STATE_PATH) ? JSON.parse(fs.readFileSync(STATE_PATH, 'utf8') || '{}') : {};
     state[key] = val;
     fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
+  },
+  delete: async (key) => {
+    if (!fs.existsSync(STATE_PATH)) return;
+    const state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8') || '{}');
+    delete state[key];
+    fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
+  },
+  list: async (options) => {
+    if (!fs.existsSync(STATE_PATH)) return { keys: [] };
+    const state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8') || '{}');
+    let keys = Object.keys(state).map(name => ({ name }));
+    if (options && options.prefix) {
+      keys = keys.filter(k => k.name.startsWith(options.prefix));
+    }
+    return { keys };
   }
 };
 
@@ -35,11 +50,10 @@ let workerCode = fs.readFileSync(workerPath, 'utf8');
 workerCode = workerCode.replace('export default', 'const worker = ');
 workerCode += '\nmodule.exports = worker;';
 
-// Use a unique temp file to avoid race conditions
 const tmpWorkerPath = path.join(__dirname, `tmp_worker_${Date.now()}.js`);
 fs.writeFileSync(tmpWorkerPath, workerCode);
 const worker = require(tmpWorkerPath);
-fs.unlinkSync(tmpWorkerPath); // Clean up immediately after require
+fs.unlinkSync(tmpWorkerPath); 
 
 const env = { BOT_STATE };
 
@@ -55,12 +69,12 @@ async function pollLoop() {
     if (data.ok && data.result.length > 0) {
       let maxId = offset;
       for (const update of data.result) {
-        // Manually handle the update
+        // Manually handle the update through worker.fetch
         const cfRequest = {
             url: `http://localhost:8080/telegram-webhook`,
             method: 'POST',
             json: async () => update,
-            headers: { entries: () => [] }
+            headers: new Map([['content-type', 'application/json']])
         };
         await worker.fetch(cfRequest, env, { waitUntil: (p) => p });
         maxId = Math.max(maxId, update.update_id + 1);

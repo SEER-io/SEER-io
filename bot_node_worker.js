@@ -24,15 +24,13 @@ export default {
       try {
         const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
         globalState = await res.json();
-        
         const engineRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request(`https://coordinator/engines?miner_id=${identity.adnl_id}`)) : await fetch(`${COORDINATOR_URL}/engines?miner_id=${identity.adnl_id}`);
-        const engineData = await engineRes.json();
-        engines = engineData.engines;
-
+        engines = (await engineRes.json()).engines;
         const minerStatsRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request(`https://coordinator/miner-stats?id=${identity.adnl_id}`)) : await fetch(`${COORDINATOR_URL}/miner-stats?id=${identity.adnl_id}`);
-        const minerStats = await minerStatsRes.json();
-        total_miner_blocks = minerStats.blocks;
+        total_miner_blocks = (await minerStatsRes.json()).blocks;
       } catch (e) {}
+
+      const mempoolList = await env.BOT_STATE.list({ prefix: "mempool:" });
 
       return new Response(JSON.stringify({ 
         blocks_mined: total_miner_blocks, 
@@ -45,17 +43,15 @@ export default {
         global_velocity: globalState.velocity,
         global_staking: globalState.staking_ratio,
         global_mcap: globalState.market_cap,
-        height: globalState.latest_block
-      }), { 
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
-      });
+        height: globalState.latest_block,
+        mempool_size: mempoolList.keys.length
+      }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
     }
 
     if (request.method === "POST" && url.pathname === "/update-settings") {
       const newSettings = await request.json();
       const currentSettings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
-      const updated = { ...currentSettings, ...newSettings };
-      await env.BOT_STATE.put("settings", JSON.stringify(updated));
+      await env.BOT_STATE.put("settings", JSON.stringify({ ...currentSettings, ...newSettings }));
       return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
     }
 
@@ -72,16 +68,13 @@ export default {
       try {
         const { amount, ton_address } = await request.json();
         const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { earned_seer: 0 };
-        if (!state.earned_seer || state.earned_seer < amount) return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400 });
+        if ((state.earned_seer || 0) < amount) return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400 });
         state.earned_seer -= amount;
         await env.BOT_STATE.put("node_state", JSON.stringify(state));
         const burn_id = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('');
-        const request_data = { burn_id, amount, ton_address, node_id: (await getOrCreateIdentity(env)).adnl_id, timestamp: Date.now(), status: "pending" };
-        await env.BOT_STATE.put(`redeem:${burn_id}`, JSON.stringify(request_data));
-        return new Response(JSON.stringify({ success: true, burn_id, message: "Tokens burned. Relayer notified." }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
-      }
+        await env.BOT_STATE.put(`redeem:${burn_id}`, JSON.stringify({ burn_id, amount, ton_address, timestamp: Date.now(), status: "pending" }));
+        return new Response(JSON.stringify({ success: true, burn_id }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+      } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500 }); }
     }
 
     return new Response("SEER Bot Node Live");
@@ -91,32 +84,87 @@ export default {
     const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true };
     const identity = await getOrCreateIdentity(env);
     const engineType = typeof process !== 'undefined' ? 'Local' : 'Cloud';
-
-    // 1. Heartbeat (Track engine presence)
     const hbBody = JSON.stringify({ miner_id: identity.adnl_id, engine_type: engineType });
-    if (env.COORDINATOR) {
-        ctx.waitUntil(env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", { method: 'POST', body: hbBody })));
-    } else {
-        ctx.waitUntil(fetch(`${COORDINATOR_URL}/heartbeat`, { method: 'POST', headers: { "Content-Type": "application/json" }, body: hbBody }));
-    }
-    
-    // 2. Process pending Telegram updates
+    if (env.COORDINATOR) ctx.waitUntil(env.COORDINATOR.fetch(new Request("https://coordinator/heartbeat", { method: 'POST', body: hbBody })));
+    else ctx.waitUntil(fetch(`${COORDINATOR_URL}/heartbeat`, { method: 'POST', headers: { "Content-Type": "application/json" }, body: hbBody }));
     ctx.waitUntil(pollTelegramUpdates(env));
-
-    // 3. Perform Mining
-    if (settings.mining_enabled) {
-      ctx.waitUntil(performMining(env));
-    }
+    if (settings.mining_enabled) ctx.waitUntil(performMining(env));
   }
 };
 
+async function signTransaction(env, recipient, amount, fee) {
+  const identity = await getOrCreateIdentity(env);
+  const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { nonce: 0 };
+  const nonce = (state.nonce || 0) + 1;
+  const binaryDer = Uint8Array.from(atob(identity.privateKeyBase64), c => c.charCodeAt(0));
+  const privateKey = await crypto.subtle.importKey("pkcs8", binaryDer, { name: "Ed25519", namedCurve: "Ed25519" }, true, ["sign"]);
+  const txData = `${identity.publicKeyHex}${recipient}${amount}${fee}${nonce}`;
+  const sig = await crypto.subtle.sign({ name: "Ed25519" }, privateKey, new TextEncoder().encode(txData));
+  const tx = { sender: identity.publicKeyHex, recipient, amount, fee, nonce, signature: bytesToHex(new Uint8Array(sig)) };
+  state.nonce = nonce;
+  await env.BOT_STATE.put("node_state", JSON.stringify(state));
+  return tx;
+}
+
+async function verifyTransaction(tx) {
+  try {
+    const publicKey = await crypto.subtle.importKey("raw", hexToBytes(tx.sender), { name: "Ed25519", namedCurve: "Ed25519" }, true, ["verify"]);
+    const txData = `${tx.sender}${tx.recipient}${tx.amount}${tx.fee}${tx.nonce}`;
+    return await crypto.subtle.verify({ name: "Ed25519" }, publicKey, hexToBytes(tx.signature), new TextEncoder().encode(txData));
+  } catch (e) { return false; }
+}
+
+async function handleTelegramUpdate(update, env) {
+  if (update.channel_post) {
+    const text = update.channel_post.text;
+    if (text && text.startsWith("SEER_TX:")) {
+      try {
+        const tx = JSON.parse(text.replace("SEER_TX:", "").trim());
+        if (await verifyTransaction(tx)) {
+           const txHash = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(tx)))));
+           await env.BOT_STATE.put(`mempool:${txHash}`, JSON.stringify(tx));
+        }
+      } catch (e) {}
+    }
+    return new Response("OK");
+  }
+
+  if (!update.message || !update.message.text) return new Response("OK");
+  const chatId = update.message.chat.id;
+  const text = update.message.text;
+
+  if (text === "/start") {
+    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining.\n\n🔗 Dashboard: https://seer-node-001.toon-satoshi.workers.dev\n\nCommands:\n/status - Fleet status\n/send <address> <amount> - Broadcast TX\n/mempool - View local mempool\n/apply - Request join Master Channel`);
+  } else if (text.startsWith("/send")) {
+    const parts = text.split(" ");
+    if (parts.length < 3) return sendTgMessage(chatId, "Usage: /send <address> <amount>");
+    const tx = await signTransaction(env, parts[1], parseInt(parts[2]), 1);
+    await announceToMasterChannel(`SEER_TX: ${JSON.stringify(tx)}`);
+    await sendTgMessage(chatId, "✅ Transaction signed and broadcast to SEER Mempool.");
+  } else if (text === "/mempool") {
+    const list = await env.BOT_STATE.list({ prefix: "mempool:" });
+    await sendTgMessage(chatId, `📦 LOCAL MEMPOOL\nPending TXs: \${list.keys.length}\n\nMiners pick these up automatically from the Master Channel.`);
+  } else if (text === "/apply") {
+    const identity = await getOrCreateIdentity(env);
+    await announceToMasterChannel(`🙋 <b>PROMOTION REQUEST</b>\nNode: <code>\${identity.adnl_id}</code>\nOperator: @\${update.message.from.username || "unknown"}`);
+    await sendTgMessage(chatId, "✅ Request sent to the Master Channel.");
+  } else if (text === "/status") {
+    const identity = await getOrCreateIdentity(env);
+    await sendTgMessage(chatId, `📊 NODE STATUS\nIdentity: \${identity.adnl_id}\nUse the Dashboard for full fleet stats.`);
+  } else if (text === "/mine") {
+    await performMining(env);
+    await sendTgMessage(chatId, "⛏️ Manual mine attempt finished.");
+  }
+  return new Response("OK");
+}
+
+async function sendTgMessage(chatId, text) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text: text }) });
+}
+
 async function announceToMasterChannel(text) {
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: MASTER_CHANNEL_ID, text: text, parse_mode: "HTML" })
-    });
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: MASTER_CHANNEL_ID, text: text, parse_mode: "HTML" }) });
   } catch (e) {}
 }
 
@@ -131,7 +179,7 @@ async function getOrCreateIdentity(env) {
   const adnl_id = bytesToHex(new Uint8Array(adnlHash)).slice(0, 24);
   const identity = { adnl_id, publicKeyHex, privateKeyBase64: btoa(String.fromCharCode(...new Uint8Array(privateKey))) };
   await env.BOT_STATE.put("identity", JSON.stringify(identity));
-  await announceToMasterChannel(`🛰 <b>NEW MINER ONLINE</b>\nNode ID: <code>${adnl_id}</code>`);
+  await announceToMasterChannel(`🛰 <b>NEW MINER ONLINE</b>\nNode ID: <code>\${adnl_id}</code>`);
   return identity;
 }
 
@@ -140,17 +188,24 @@ async function performMining(env) {
   const engineType = typeof process !== 'undefined' ? 'Local' : 'Cloud';
   try {
     const identity = await getOrCreateIdentity(env);
-    
-    let res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
+    const res = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/network-state")) : await fetch(`${COORDINATOR_URL}/network-state`);
     const netState = await res.json();
-    const currentHeight = netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block);
-    const targetHeight = currentHeight + 1;
+    const targetHeight = (netState.latest_block === "Genesis" ? 0 : parseInt(netState.latest_block)) + 1;
     const prevHash = hexToBytes(netState.latest_hash || "0000000000000000000000000000000000000000000000000000000000000000");
     
+    // Pick up Transactions from local Mempool
+    const mempoolList = await env.BOT_STATE.list({ prefix: "mempool:", limit: 5 });
+    const txs = [];
+    for (const key of mempoolList.keys) {
+      txs.push(await env.BOT_STATE.get(key.name, { type: "json" }));
+    }
+    const txRoot = bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(txs)))));
+
     const buffer = new ArrayBuffer(92);
     const view = new DataView(buffer);
     view.setBigUint64(0, BigInt(targetHeight), true);
     new Uint8Array(buffer).set(prevHash, 8);
+    new Uint8Array(buffer).set(hexToBytes(txRoot), 40);
     view.setUint32(80, 16, true);
 
     for (let i = 0; i < 50000; i++) {
@@ -162,20 +217,20 @@ async function performMining(env) {
       
       if (hashArray[0] === 0 && hashArray[1] === 0) {
         const hashHex = bytesToHex(hashArray);
-        const submitBody = JSON.stringify({ height: targetHeight, prev_hash: bytesToHex(prevHash), timestamp: Number(timestamp), difficulty: 16, nonce: Number(nonce), hash: hashHex, miner: identity.adnl_id });
+        const submitBody = JSON.stringify({ height: targetHeight, prev_hash: bytesToHex(prevHash), tx_root: txRoot, transactions: txs, timestamp: Number(timestamp), difficulty: 16, nonce: Number(nonce), hash: hashHex, miner: identity.adnl_id });
         let submitRes = env.COORDINATOR ? await env.COORDINATOR.fetch(new Request("https://coordinator/submit-block", { method: "POST", body: submitBody })) : await fetch(`${COORDINATOR_URL}/submit-block`, { method: "POST", headers: { "Content-Type": "application/json" }, body: submitBody });
         
         if (submitRes.ok) {
-          await env.BOT_STATE.put("last_mining_log", `Success! [${engineType}] Block ${targetHeight} mined.`);
-          await announceToMasterChannel(`⛏ <b>BLOCK MINED</b> [${engineType}]\nHeight: <b>${targetHeight}</b>\nMiner: <code>${identity.adnl_id}</code>`);
+          await env.BOT_STATE.put("last_mining_log", `Success! [\${engineType}] Block \${targetHeight} mined with \${txs.length} txs.`);
+          await announceToMasterChannel(`⛏ <b>BLOCK MINED</b> [\${engineType}]\nHeight: <b>\${targetHeight}</b>\nTXs: \${txs.length}\nMiner: <code>\${identity.adnl_id}</code>`);
+          // Clear processed TXs
+          for (const key of mempoolList.keys) await env.BOT_STATE.delete(key.name);
           return { height: targetHeight, hash: hashHex };
         }
       }
     }
-    await env.BOT_STATE.put("last_mining_log", `Cycle finished [${engineType}]. No block.`);
-  } catch (e) {
-    await env.BOT_STATE.put("last_mining_log", `Error: ${e.message}`);
-  }
+    await env.BOT_STATE.put("last_mining_log", `Cycle finished [\${engineType}]. No block.`);
+  } catch (e) { await env.BOT_STATE.put("last_mining_log", `Error: \${e.message}`); }
   return null;
 }
 
@@ -189,31 +244,10 @@ function bytesToHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function handleTelegramUpdate(update, env) {
-  if (!update.message || !update.message.text) return new Response("OK");
-  const chatId = update.message.chat.id;
-  const text = update.message.text;
-
-  if (text === "/start") {
-    await sendTgMessage(chatId, `👁️ SEER Node Bot v1.0.0\n\nWelcome operator! Your node is active and mining.\n\n🔗 Dashboard: https://seer-node-001.toon-satoshi.workers.dev`);
-  } else if (text === "/status") {
-    const identity = await getOrCreateIdentity(env);
-    await sendTgMessage(chatId, `📊 NODE STATUS\nIdentity: ${identity.adnl_id}\nUse the Dashboard for full fleet stats.`);
-  } else if (text === "/mine") {
-    await performMining(env);
-    await sendTgMessage(chatId, "⛏️ Manual mine attempt finished.");
-  }
-  return new Response("OK");
-}
-
-async function sendTgMessage(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text: text }) });
-}
-
 async function pollTelegramUpdates(env) {
   try {
     const offset = await env.BOT_STATE.get("tg_offset") || 0;
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset}&timeout=30`);
+    const res = await fetch(`https://api.telegram.org/bot\${BOT_TOKEN}/getUpdates?offset=\${offset}&timeout=30`);
     const data = await res.json();
     if (data.ok && data.result.length > 0) {
       let maxId = offset;
@@ -227,7 +261,7 @@ async function pollTelegramUpdates(env) {
 }
 
 function generateDashboardHTML() {
-  return `<!DOCTYPE html>
+  return \`<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -270,7 +304,7 @@ function generateDashboardHTML() {
 
         <div class="stats-grid">
             <div class="stat-item"><div class="stat-l">Block Height</div><div class="stat-v" id="height">0</div></div>
-            <div class="stat-item"><div class="stat-l">Network MCAP</div><div class="stat-v" id="global-mcap">$0</div></div>
+            <div class="stat-item"><div class="stat-l">Mempool</div><div class="stat-v" id="mempool">0</div></div>
         </div>
 
         <div style="font-size: 0.7rem; opacity: 0.6; margin-bottom: 8px;">ORACLE MINING FEED</div>
@@ -290,23 +324,25 @@ function generateDashboardHTML() {
     <script>
         const SYMBOLS = ["▲", "■", "◆", "◉", "·"];
         async function fetchStats() {
-            const res = await fetch('/status');
-            const data = await res.json();
-            document.getElementById('earned-seer').textContent = data.earned_seer || 0;
-            document.getElementById('height').textContent = data.height;
-            document.getElementById('wallet-short').textContent = data.public_key.slice(0, 10) + '...';
-            document.getElementById('mining-toggle').checked = data.mining_enabled;
-            document.getElementById('last-log').textContent = data.last_log;
-            document.getElementById('global-mcap').textContent = '$' + (data.global_mcap / 1000000).toFixed(2) + 'M';
-            
-            const fleet = document.getElementById('engine-fleet');
-            fleet.innerHTML = '';
-            ['Cloud', 'Local'].forEach(type => {
-                const span = document.createElement('span');
-                span.className = 'engine-tag' + (data.active_engines.includes(type) ? ' engine-active' : '');
-                span.textContent = type + ' ENGINE';
-                fleet.appendChild(span);
-            });
+            try {
+                const res = await fetch('/status');
+                const data = await res.json();
+                document.getElementById('earned-seer').textContent = data.earned_seer || 0;
+                document.getElementById('height').textContent = data.height;
+                document.getElementById('mempool').textContent = data.mempool_size;
+                document.getElementById('wallet-short').textContent = data.public_key.slice(0, 10) + '...';
+                document.getElementById('mining-toggle').checked = data.mining_enabled;
+                document.getElementById('last-log').textContent = data.last_log;
+                
+                const fleet = document.getElementById('engine-fleet');
+                fleet.innerHTML = '';
+                ['Cloud', 'Local'].forEach(type => {
+                    const span = document.createElement('span');
+                    span.className = 'engine-tag' + (data.active_engines.includes(type) ? ' engine-active' : '');
+                    span.textContent = type + ' ENGINE';
+                    fleet.appendChild(span);
+                });
+            } catch(e) {}
         }
         async function saveSettings() {
             const enabled = document.getElementById('mining-toggle').checked;
@@ -328,5 +364,5 @@ function generateDashboardHTML() {
         setInterval(updateConsole, 50);
     </script>
 </body>
-</html>`;
+</html>\`;
 }
