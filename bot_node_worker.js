@@ -4,9 +4,10 @@ const COORDINATOR_URL = "https://seer-coordinator.toon-satoshi.workers.dev";
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    await env.BOT_STATE.put("last_request", `${request.method} ${url.pathname} at ${new Date().toISOString()}`);
 
     // 1. Handle Telegram Webhooks
-    if (request.method === "POST" && url.pathname === `/bot${BOT_TOKEN}`) {
+    if (request.method === "POST" && url.pathname.includes(BOT_TOKEN)) {
       const update = await request.json();
       return handleTelegramUpdate(update, env);
     }
@@ -16,8 +17,9 @@ export default {
       const state = await env.BOT_STATE.get("node_state", { type: "json" }) || { height: 0, blocks_mined: 0 };
       const settings = await env.BOT_STATE.get("settings", { type: "json" }) || { mining_enabled: true, node_name: "SEER Node 001" };
       const lastLog = await env.BOT_STATE.get("last_mining_log") || "No logs yet.";
+      const lastReq = await env.BOT_STATE.get("last_request") || "None";
       const nodeID = await getNodeID(env);
-      return new Response(JSON.stringify({ ...state, ...settings, node_id: nodeID, last_log: lastLog }), { 
+      return new Response(JSON.stringify({ ...state, ...settings, node_id: nodeID, last_log: lastLog, last_request: lastReq }), { 
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
       });
     }
