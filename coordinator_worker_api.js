@@ -26,6 +26,7 @@ export default {
           staking_ratio: 0.15,
           market_cap: 1000
         };
+        state.api_version = "ORACLE-v1.0";
         return new Response(JSON.stringify(state), {
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
@@ -62,39 +63,36 @@ export default {
         }
         
         // 3. Oracle-enhanced Tokenomics (derived from tokenomics_oracle.py)
-        const prevState = await env.NETWORK_STATE.get("latest", { type: "json" }) || {
-          total_supply: 100000000,
-          velocity: 0.002,
-          sentiment: 0.5,
-          gini: 0.35
-        };
+        const prevState = await env.NETWORK_STATE.get("latest", { type: "json" }) || {};
+        
+        const prevSupply = Number(prevState.total_supply) || 100000000;
+        const prevSentiment = Number(prevState.sentiment) || 0.5;
+        const prevVelocity = Number(prevState.velocity) || 0.002;
+        const prevGini = Number(prevState.gini) || 0.35;
 
         const reward = 50;
-        const newSupply = prevState.total_supply + reward;
+        const newSupply = prevSupply + reward;
         
-        // Dynamic metrics simulation (matching tokenomics_oracle.py formulas)
-        const tick = Number(height);
-        const sentiment = Math.max(0.1, Math.min(0.9, prevState.sentiment + (Math.random() * 0.02 - 0.01)));
-        const velocity = Math.max(0.001, Math.min(0.01, prevState.velocity + (Math.random() * 0.0005 - 0.0002)));
-        const gini = Math.max(0.1, Math.min(0.9, prevState.gini + (Math.random() * 0.01 - 0.005)));
+        const tick = Number(block.height) || 0;
+        const sentiment = Math.max(0.1, Math.min(0.9, prevSentiment + (Math.random() * 0.02 - 0.01)));
+        const velocity = Math.max(0.001, Math.min(0.01, prevVelocity + (Math.random() * 0.0005 - 0.0002)));
+        const gini = Math.max(0.1, Math.min(0.9, prevGini + (Math.random() * 0.01 - 0.005)));
         
-        // staking_ratio = max(0.08, min(0.92, 0.18 + (gini * 0.72) + sin(tick/137)*0.07 + (sentiment*0.25)))
         const stakingRatio = Math.max(0.08, Math.min(0.92, 0.18 + (gini * 0.72) + Math.sin(tick / 137) * 0.07 + (sentiment * 0.25)));
-        
-        // market_cap_proxy = (supply * (1.35 + velocity * 1.1 - gini * 0.65)) / 7.5
         const marketCap = (newSupply * (1.35 + velocity * 1.1 - gini * 0.65)) / 7.5;
 
         const newState = {
-          latest_block: Number(height),
+          latest_block: tick,
           latest_hash: computedHashHex,
           total_supply: newSupply,
           active_nodes: 1,
           network_name: "SEER Mainnet",
-          velocity: velocity,
-          sentiment: sentiment,
-          gini: gini,
-          staking_ratio: stakingRatio,
-          market_cap: marketCap
+          velocity: Number(velocity.toFixed(6)),
+          sentiment: Number(sentiment.toFixed(6)),
+          gini: Number(gini.toFixed(6)),
+          staking_ratio: Number(stakingRatio.toFixed(6)),
+          market_cap: Number(marketCap.toFixed(2)),
+          api_version: "ORACLE-v1.1"
         };
         
         await env.NETWORK_STATE.put("latest", JSON.stringify(newState));

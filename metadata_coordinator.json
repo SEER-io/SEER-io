@@ -1,0 +1,12 @@
+{
+  "main_module": "coordinator_worker_api.js",
+  "bindings": [
+    {
+      "type": "kv_namespace",
+      "name": "NETWORK_STATE",
+      "namespace_id": "a2e00c297fd94607a62b0236265bf81c"
+    }
+  ],
+  "usage_model": "standard",
+  "compatibility_date": "2026-06-06"
+}

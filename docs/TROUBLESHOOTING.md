@@ -9,41 +9,35 @@ This guide covers common issues encountered by operators when deploying SEER Net
 ### Q: Why does the Global Explorer show "Sync Error" or "Scanning..." forever?
 **A:** This usually means the Explorer cannot talk to the Coordinator.
 1. **Check the Subdomain:** Go to your Cloudflare Dashboard -> `seer-coordinator` -> Settings -> Triggers. Ensure the `workers.dev` subdomain is **ENABLED**.
-2. **Missing KV Storage:** Ensure you have a KV namespace named `NETWORK_STATE` created and bound to the `seer-coordinator` worker.
-3. **CORS Issues:** If you are testing locally, ensure the coordinator's URL in `index.html` matches your actual worker URL.
+2. **Internal Blocking:** Ensure the `COORDINATOR` Service Binding is correctly set in your bot worker settings. This allows the bot to talk to the coordinator internally.
 
 ---
 
 ### Q: My Telegram Bot is unresponsive to `/start`. Why?
-**A:** Telegram is trying to send messages to your worker, but the worker is either not there or returning an error.
-1. **Check the Subdomain:** Just like the coordinator, ensure `seer-node-001` has its `workers.dev` subdomain **ENABLED** in the Cloudflare dashboard.
-2. **Webhook Error:** If it's enabled but still dead, run this command to see the error:
-   ```bash
-   curl -s "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
-   ```
-   If it says `404 Not Found`, the worker URL is wrong. If it says `401 Unauthorized`, your `BOT_TOKEN` is wrong.
+**A:** Telegram messages might be blocked or the worker is unreachable.
+1. **Check the Subdomain:** Ensure `seer-node-001` has its `workers.dev` subdomain **ENABLED** in the Cloudflare dashboard.
+2. **Polling Fallback:** We have implemented a polling fallback. If webhooks are blocked, the bot will still process messages every 60 seconds during its mining cycle. Wait 1 minute and try again.
 
 ---
 
-### Q: GitHub Actions are failing with "Uncaught SyntaxError" or "TypeError".
-**A:** This is usually due to the worker module format.
-1. **ES Module vs Service Worker:** Cloudflare Workers use two different formats. If you are using `export default { fetch... }`, you must use the `--compatibility-flags` or specify the module type in `wrangler.toml`.
-2. **Missing Secrets:** Check your GitHub Repository -> Settings -> Secrets -> Actions. You MUST have:
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-   - `BOT_TOKEN`
+### Q: Why is my SEER balance still 0.00?
+**A:** SEER is earned by successfully mining a block.
+1. **Check the Log:** Look at the "Last:" line in your Dashboard. If it says "Cycle finished. No block found," it means you haven't won the lottery yet.
+2. **Difficulty:** The current difficulty is 16-bit. On average, it takes about 65,000 hashes to find a block. Your node tries 50,000-100,000 per minute. You should earn tokens within a few minutes of active mining.
 
 ---
 
-### Q: The Pages deployment fails with "Missing project name" or "Binding errors".
-**A:** `wrangler.toml` is very strict.
-1. **Name Field:** Ensure `name = "seer-network"` is at the very top of your `wrangler.toml`.
-2. **IDs:** Bindings like `kv_namespaces` and `d1_databases` require an `id` (or `database_id`) string. You can find these IDs in the Cloudflare Dashboard under each resource.
+### Q: What is the "Market Cap Proxy" and "Estimated Value"?
+**A:** This is a value derived from the **Oracle Tokenomics**.
+- It is an algorithmic estimation based on network velocity, scarcity, and distribution stability.
+- As the network grows (more nodes, more blocks), the Market Cap Proxy increases, which in turn increases the USD value of your earned SEER.
 
 ---
 
-### Q: How do I manually "Force" a mining cycle?
-**A:** Open your bot in Telegram and type `/mine`. The bot will attempt to find a block immediately and send it to the coordinator. If it succeeds, the Explorer will update automatically.
+### Q: How do I backup my Wallet?
+**A:** Your wallet (Ed25519) is stored in the **`BOT_STATE`** KV namespace under the key `identity`.
+- To "backup," you can copy the value of this key from the Cloudflare Dashboard.
+- **Warning:** Never share your `privateKeyBase64` with anyone.
 
 ---
 
