@@ -8,6 +8,8 @@ on:
       - 'explorer/**'
       - 'index.html'
       - 'package.json'
+      - 'wrangler.toml'
+      - '.github/workflows/deploy-pages.yml'
 
 jobs:
   deploy:
